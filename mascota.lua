@@ -45,7 +45,7 @@ local status = {} -- session → { state, at }
 local pet -- the pet on screen: { canvas, web, items, index, size, ... } or nil
 local drag -- the pet being dragged: { from, at, moved }
 local sheet, frames, petName, loadedId = nil, {}, nil, nil
-local watcher, focusFilter, mouseTap
+local watcher, focusFilter, mouseTap, tapGuard
 
 -- Pet sprites ----------------------------------------------------------------------------
 
@@ -132,6 +132,8 @@ end
 -- One step of the pet's life: it plays its mood once, then breathes (idle) and plays it again now
 -- and then; while you move the mouse it turns to look at it. Nothing while it runs or is dragged.
 local function animate()
+  if drag and not hs.eventtap.checkMouseButtons().left then drag = nil end
+  if pet.running and not (pet.runTimer and pet.runTimer:running()) then pet.running = false end
   if not sheet or pet.running or drag then return end
   local now = hs.timer.secondsSinceEpoch()
   local mouse = hs.mouse.absolutePosition()
@@ -212,6 +214,8 @@ h1 { font-size: 15px; margin: 0 0 2px; }
 .where { color: #9aa5b5; font-size: 12px; margin-bottom: 6px; }
 .detail { font: 12px/1.35 Menlo, monospace; color: #dcdcdc; max-height: 4.1em; overflow: hidden;
   margin-bottom: 8px; word-break: break-word; }
+.answer { font: 13px/1.45 -apple-system, system-ui, sans-serif; max-height: 15em; overflow-y: auto;
+  white-space: pre-wrap; padding-right: 4px; }
 .row { display: flex; gap: 6px; align-items: center; }
 .col { display: grid; gap: 5px; margin-bottom: 6px; }
 button { font: 600 13px -apple-system, system-ui, sans-serif; border: 0; border-radius: 7px; padding: 6px 12px;
@@ -299,7 +303,8 @@ local function bubbleHTML(req, index, total)
     .. '<div class="b"><div class="top"><div class="counts" id="counts"></div><div class="nav" id="nav"></div></div>'
     .. "<h1>" .. esc(title) .. "</h1>"
     .. '<div class="where">' .. esc(where) .. "</div>"
-    .. (detail and detail ~= "" and ('<div class="detail">' .. esc(detail) .. "</div>") or "")
+    .. (detail and detail ~= "" and ('<div class="detail' .. (req.kind == "done" and " answer" or "") .. '">'
+      .. esc(detail) .. "</div>") or "")
     .. controls .. "</div><script>" .. data:gsub("</", "<\\/") .. JS
     .. string.format("pager(%d, %d); counts(%d, %d);", index, total, working, waiting) .. "</script></body></html>"
 end
@@ -536,21 +541,25 @@ local function onMouse(e)
   if drag and kind == types.leftMouseUp then
     local moved = drag.moved
     drag = nil
-    if moved then pet.dragged = true else onMessage({ action = "go" }) end
+    if moved then pet.dragged = true else hs.timer.doAfter(0, function() onMessage({ action = "go" }) end) end
     return true
   end
   local f = kind == types.leftMouseDown and pet.web and pet.web:isVisible() and pet.web:frame()
   if not inside(p, f) then return false end
-  local win = pet.web:hswindow()
-  if win and hs.window.focusedWindow() ~= win then
-    pet.back = hs.window.focusedWindow()
-    win:focus()
-  end
-  pet.web:evaluateJavaScript(string.format([[(() => {
-    const el = document.elementFromPoint(%d, %d);
-    const target = el && el.closest("button, input");
-    if (target && target.tagName === "INPUT") target.focus(); else if (target) target.click();
-  })()]], math.floor(p.x - f.x), math.floor(p.y - f.y)))
+  local x, y = math.floor(p.x - f.x), math.floor(p.y - f.y)
+  hs.timer.doAfter(0, function()
+    if not (pet and pet.web) then return end
+    local win = pet.web:hswindow()
+    if win and hs.window.focusedWindow() ~= win then
+      pet.back = hs.window.focusedWindow()
+      win:focus()
+    end
+    pet.web:evaluateJavaScript(string.format([[(() => {
+      const el = document.elementFromPoint(%d, %d);
+      const target = el && el.closest("button, input");
+      if (target && target.tagName === "INPUT") target.focus(); else if (target) target.click();
+    })()]], x, y))
+  end)
   return true
 end
 
@@ -634,6 +643,8 @@ function M.start()
   watcher = hs.pathwatcher.new(INBOX, poll):start()
   local types = hs.eventtap.event.types
   mouseTap = hs.eventtap.new({ types.leftMouseDown, types.leftMouseDragged, types.leftMouseUp }, onMouse):start()
+  -- macOS turns off a mouse listener that answered too slowly once; turn it back on.
+  tapGuard = hs.timer.doEvery(3, function() if not mouseTap:isEnabled() then drag = nil; mouseTap:start() end end)
   focusFilter = hs.window.filter.new(function(w)
     local app = w:application()
     return app ~= nil and TERMINALS[app:bundleID()] == true

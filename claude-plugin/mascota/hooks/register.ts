@@ -1,5 +1,5 @@
 import type { EngineInterface, Register } from "claude-code";
-import { describe, firstLine } from "./text.ts";
+import { describe, excerpt } from "./text.ts";
 
 // The mascot itself lives in Hammerspoon (~/.hammerspoon/mascota.lua). This plugin drops one JSON
 // request per event in its inbox; Hammerspoon picks it up by deleting the file. For an approval or
@@ -69,7 +69,7 @@ export const register: Register = (on) => {
   on("turn.complete", async ($, e, next) => {
     const result = await next(e);
     if (e.agentId === undefined && e.reason === "answer") {
-      send($, "done", { text: firstLine(e.answer), seconds: Math.round(e.durationMs / 1000), mode }).catch(() => {});
+      send($, "done", { text: excerpt(e.answer), seconds: Math.round(e.durationMs / 1000), mode }).catch(() => {});
     }
     return result;
   });

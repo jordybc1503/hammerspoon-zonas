@@ -7,6 +7,12 @@ export function clip(text: string, max = MAX): string {
   return flat.length > max ? flat.slice(0, max - 1) + "…" : flat;
 }
 
+// The whole answer for the bubble, which scrolls: line breaks kept, cut at `max` characters.
+export function excerpt(answer: string, max = 4000): string {
+  const text = answer.trim();
+  return text.length > max ? text.slice(0, max - 1) + "…" : text;
+}
+
 export function firstLine(answer: string): string {
   const line = answer.split("\n").map((l) => l.replace(/^[#>*\-\s]+/, "").trim()).find(Boolean);
   return clip(line ?? "");

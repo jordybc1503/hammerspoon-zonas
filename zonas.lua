@@ -68,7 +68,7 @@ local MOD = { ctrl = "⌃", alt = "⌥", shift = "⇧", cmd = "⌘" }
 local KEYLABEL = { left = "←", right = "→", up = "↑", down = "↓", ["return"] = "↩", space = "␣", tab = "⇥" }
 local FULL = { x = 0, y = 0, w = 1, h = 1 }
 
-local saved, actions, editor, menu, dragTap, screenWatcher
+local saved, actions, editor, menu, dragTap, screenWatcher, tapGuard
 local hotkeys = {}
 
 local function clone(t) return hs.json.decode(hs.json.encode(t)) end
@@ -473,6 +473,8 @@ function M.start(acts)
   apply()
   local types = hs.eventtap.event.types
   dragTap = hs.eventtap.new({ types.leftMouseDragged, types.leftMouseUp }, onDrag):start()
+  -- macOS turns off a mouse listener that answered too slowly once; turn it back on.
+  tapGuard = hs.timer.doEvery(3, function() if not dragTap:isEnabled() then dragTap:start() end end)
   screenWatcher = hs.screen.watcher.new(apply):start()
   menu = hs.menubar.new():setTitle("▦"):setTooltip(M.t("title")):setMenu(menuItems)
   hs.menuIcon(false)
