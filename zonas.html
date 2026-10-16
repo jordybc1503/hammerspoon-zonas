@@ -1,0 +1,660 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Zonas</title>
+<style>
+/* Layout: tab bar with the save button; Zones = layout list + screen drawn to scale + zone toolbar. */
+:root {
+  --bg: #f3f5f8; --panel: #ffffff; --fg: #1b2330; --muted: #5b6676; --line: #d9dee6;
+  --accent: #2f5fd0; --accent-fg: #ffffff; --soft: rgba(47, 95, 208, 0.12); --zone: rgba(47, 95, 208, 0.16);
+  --zone-sel: rgba(47, 95, 208, 0.38); --danger: #c23b3b;
+  --float: #c46f0c; --float-soft: rgba(224, 138, 30, 0.22); --float-sel: rgba(224, 138, 30, 0.45); color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12161d; --panel: #1a2029; --fg: #e6eaf0; --muted: #9aa5b5; --line: #2c3442;
+    --accent: #7ea2ff; --accent-fg: #0d1320; --soft: rgba(126, 162, 255, 0.14); --zone: rgba(126, 162, 255, 0.18);
+    --zone-sel: rgba(126, 162, 255, 0.42); --danger: #ff8a8a;
+    --float: #f0a24a; --float-soft: rgba(240, 162, 74, 0.2); --float-sel: rgba(240, 162, 74, 0.45); color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg); color: var(--fg);
+  font: 14px/1.45 -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  display: grid; grid-template-rows: auto minmax(0, 1fr);
+}
+header {
+  display: flex; align-items: center; gap: 6px; padding: 10px 16px;
+  background: var(--panel); border-bottom: 1px solid var(--line);
+}
+.tab {
+  font: inherit; font-weight: 600; color: var(--muted); background: none; cursor: pointer;
+  border: 0; border-radius: 7px; padding: 6px 12px;
+}
+.tab:hover { background: var(--soft); }
+.tab.on { color: var(--fg); background: var(--soft); }
+.spacer { flex: 1; }
+.msg { color: var(--muted); font-size: 13px; text-align: right; }
+.msg.err { color: var(--danger); }
+.view { overflow: auto; }
+.zones { display: grid; grid-template-columns: 210px minmax(0, 1fr); height: 100%; }
+aside {
+  background: var(--panel); border-right: 1px solid var(--line);
+  padding: 12px 10px; display: flex; flex-direction: column; gap: 2px; overflow: auto;
+}
+h2 {
+  font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
+  margin: 12px 8px 4px; font-weight: 600;
+}
+aside h2:first-child { margin-top: 0; }
+.item {
+  font: inherit; color: inherit; background: none; border: 0; text-align: left; cursor: pointer;
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  padding: 7px 10px; border-radius: 7px;
+}
+.item:hover { background: var(--soft); }
+.item.sel { background: var(--accent); color: var(--accent-fg); }
+.badge { font-size: 11px; padding: 0 6px; border-radius: 99px; border: 1px solid currentColor; opacity: 0.85; white-space: nowrap; }
+.empty { color: var(--muted); font-size: 13px; padding: 4px 10px; }
+main { padding: 16px 22px; display: flex; flex-direction: column; gap: 14px; overflow: auto; min-width: 0; }
+.name {
+  font: 600 18px/1.2 -apple-system, system-ui, sans-serif; color: var(--fg); background: transparent;
+  border: 1px solid transparent; border-radius: 6px; padding: 4px 6px; width: 100%;
+}
+.name:not(:disabled):hover, .name:focus { border-color: var(--line); outline: none; background: var(--panel); }
+.hint { color: var(--muted); margin: 0; max-width: 75ch; }
+.screen {
+  position: relative; width: 100%; border: 2px solid var(--line); border-radius: 10px;
+  background: var(--panel); overflow: hidden; user-select: none;
+}
+.zone {
+  position: absolute; border-radius: 6px; background: var(--zone); border: 2px solid var(--accent);
+  display: grid; place-items: center; text-align: center; cursor: pointer; padding: 0;
+  font: inherit; color: inherit;
+}
+.zone.sel { background: var(--zone-sel); }
+.zone b { font-size: 22px; line-height: 1; color: var(--accent); }
+.zone.sel b { color: var(--fg); }
+.zone.float { border: 2px dashed var(--float); background: var(--float-soft); z-index: 3; cursor: move; backdrop-filter: blur(2px); }
+.zone.float.sel { background: var(--float-sel); }
+.zone.float b { color: var(--float); }
+.zone.float.sel b { color: var(--fg); }
+input[type="number"] { font: inherit; width: 64px; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px; }
+.zone small { display: block; color: var(--muted); font-size: 11px; margin-top: 3px; font-variant-numeric: tabular-nums; }
+.handle { position: absolute; z-index: 2; display: grid; place-items: center; }
+.handle.h { width: 14px; margin-left: -7px; cursor: col-resize; }
+.handle.v { height: 14px; margin-top: -7px; cursor: row-resize; }
+.handle::after { content: ""; border-radius: 2px; background: var(--accent); }
+.handle.h::after { width: 4px; height: min(38px, 60%); }
+.handle.v::after { height: 4px; width: min(38px, 60%); }
+.handle:hover::after, .handle.on::after { transform: scale(1.6); }
+.bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px;
+}
+.bar strong { margin-right: 4px; }
+.btn {
+  font: inherit; font-size: 13px; color: var(--fg); background: var(--bg); cursor: pointer;
+  border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px;
+}
+.btn:hover:not(:disabled) { border-color: var(--accent); }
+.btn:disabled { opacity: 0.45; cursor: default; }
+.btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 600; padding: 6px 14px; }
+.btn.danger { color: var(--danger); }
+.btn.rec { border-color: var(--accent); background: var(--soft); }
+kbd {
+  font: 600 12px/1.5 ui-monospace, Menlo, monospace; padding: 1px 6px; border-radius: 5px;
+  border: 1px solid var(--line); border-bottom-width: 2px; background: var(--bg);
+}
+button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.page { padding: 18px 22px; display: grid; gap: 12px; max-width: 760px; }
+.card {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: 14px 16px; display: grid; gap: 8px;
+}
+.card h3 { margin: 0; font-size: 15px; }
+.card p { margin: 0; color: var(--muted); font-size: 13px; max-width: 70ch; }
+.row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mod { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
+.mod:has(input:checked) { border-color: var(--accent); background: var(--soft); }
+select { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; }
+input[type="range"] { width: 240px; accent-color: var(--accent); }
+.mini { max-width: 420px; }
+</style>
+</head>
+<body>
+<header>
+  <button class="tab" data-tab="zones" id="tab-zones"></button>
+  <button class="tab" data-tab="keys" id="tab-keys"></button>
+  <button class="tab" data-tab="general" id="tab-general"></button>
+  <span class="spacer"></span>
+  <span id="msg" class="msg"></span>
+  <button id="save" class="btn primary"></button>
+</header>
+<div id="view" class="view"></div>
+<script>
+const INIT = __INIT__;
+
+const STR = {
+  es: {
+    zones: "Zonas", keys: "Atajos", general: "General", save: "Guardar", saved: "Guardado. Ya funciona.",
+    saveFail: "Hammerspoon no ha aceptado los cambios.", unsaved: "Cambios sin guardar",
+    templates: "Plantillas", mine: "Mis diseños", noneMine: "Aún no tienes. Elige una plantilla y pulsa «Crear copia».",
+    copy: "Crear copia para editar", del: "Borrar diseño", delSure: "¿Seguro? Pulsa otra vez", useOn: "Usar en {0}", inUseOn: "En uso en {0}",
+    inUse: "en uso", copySuffix: " (mío)",
+    hintTemplate: "Las plantillas no se cambian. Pulsa «Crear copia para editar» para hacer tu diseño a partir de esta.",
+    hintEdit: "Haz clic en una zona para elegirla. Arrastra las líneas azules para cambiar el tamaño; se ajustan solas a 1/6, 1/4, 1/3, 1/2… cuando pasas cerca.",
+    zoneN: "Zona {0}", pickZone: "Elige una zona en el dibujo.",
+    splitH: "Dividir ↔ en columnas", splitV: "Dividir ↕ en filas", remove: "Quitar zona",
+    key: "Atajo", press: "Pulsa una tecla…", none: "sin atajo", recHelp: "Esc cancela · ⌫ quita el atajo",
+    moveTitle: "Mover la ventana a una zona", moveHelp: "Estas teclas + la tecla de cada zona (se elige en Zonas).",
+    fullTitle: "Pantalla completa", fullHelp: "Las mismas teclas de arriba + esta tecla.",
+    dragTitle: "Arrastrar a una zona", dragHelp: "Mantén esta tecla mientras arrastras una ventana para ver las zonas. Control no está: en el Mac, Control + clic es el clic derecho.",
+    mergeTitle: "Unir zonas al arrastrar", mergeHelp: "Mientras arrastras, pulsa también esta tecla en la primera zona y mueve el ratón hasta la última.",
+    translateTitle: "Traducir la palabra seleccionada", translateHelp: "Pulsa la combinación entera, con al menos una de ⌃ ⌥ ⇧ ⌘.",
+    restore: "Volver a los atajos de fábrica",
+    ctrl: "⌃ Control", alt: "⌥ Option (Alt)", shift: "⇧ Shift", cmd: "⌘ Command (tecla Windows)",
+    langTitle: "Idioma", langHelp: "El idioma del menú ▦ y de esta ventana.", auto: "Automático: el del sistema ({0})",
+    gapTitle: "Separación entre zonas", gapHelp: "El espacio entre ventanas y en los bordes de la pantalla.",
+    errMods: "Elige al menos una tecla para mover a las zonas.", errDragMerge: "Arrastrar y unir zonas no pueden usar la misma tecla.",
+    errDup: "«{0}»: dos zonas usan la tecla {1}.", errFull: "«{0}»: una zona usa {1}, la misma tecla que pantalla completa.",
+    errTranslate: "El atajo del traductor ({0}) ya lo usa una zona.", errName: "Ponle un nombre al diseño.",
+    errKey: "Esa tecla no se puede usar. Prueba una letra, un número, una flecha, Enter, Espacio o F1–F12.",
+    errNeedMod: "Añade al menos una de ⌃ ⌥ ⇧ ⌘.",
+    addFloat: "Añadir zona flotante", floatN: "Zona flotante", width: "Ancho %", height: "Alto %", center: "Centrar",
+    floatHint: "Queda encima de las demás zonas. Arrástrala en el dibujo para moverla.",
+  },
+  en: {
+    zones: "Zones", keys: "Shortcuts", general: "General", save: "Save", saved: "Saved. It works now.",
+    saveFail: "Hammerspoon did not accept the changes.", unsaved: "Unsaved changes",
+    templates: "Templates", mine: "My layouts", noneMine: "None yet. Pick a template and press “Make a copy”.",
+    copy: "Make a copy to edit", del: "Delete layout", delSure: "Sure? Press again", useOn: "Use on {0}", inUseOn: "In use on {0}",
+    inUse: "in use", copySuffix: " (mine)",
+    hintTemplate: "Templates do not change. Press “Make a copy to edit” to build your own layout from this one.",
+    hintEdit: "Click a zone to pick it. Drag the blue lines to resize; they snap to 1/6, 1/4, 1/3, 1/2… when you pass close.",
+    zoneN: "Zone {0}", pickZone: "Pick a zone in the drawing.",
+    splitH: "Split ↔ into columns", splitV: "Split ↕ into rows", remove: "Remove zone",
+    key: "Shortcut", press: "Press a key…", none: "no shortcut", recHelp: "Esc cancels · ⌫ removes the shortcut",
+    moveTitle: "Move the window to a zone", moveHelp: "These keys + each zone's key (set in Zones).",
+    fullTitle: "Full screen", fullHelp: "The same keys as above + this key.",
+    dragTitle: "Drag to a zone", dragHelp: "Hold this key while you drag a window to see the zones. Control is not offered: on the Mac, Control + click is a right click.",
+    mergeTitle: "Span zones while dragging", mergeHelp: "While dragging, also press this key on the first zone and move the mouse to the last one.",
+    translateTitle: "Translate the selected word", translateHelp: "Press the whole combination, with at least one of ⌃ ⌥ ⇧ ⌘.",
+    restore: "Back to the default shortcuts",
+    ctrl: "⌃ Control", alt: "⌥ Option (Alt)", shift: "⇧ Shift", cmd: "⌘ Command (Windows key)",
+    langTitle: "Language", langHelp: "The language of the ▦ menu and of this window.", auto: "Automatic: the system's ({0})",
+    gapTitle: "Gap between zones", gapHelp: "The space between windows and at the screen edges.",
+    errMods: "Pick at least one key to move to zones.", errDragMerge: "Drag and span cannot use the same key.",
+    errDup: "“{0}”: two zones use the key {1}.", errFull: "“{0}”: a zone uses {1}, the same key as full screen.",
+    errTranslate: "The translator shortcut ({0}) is already used by a zone.", errName: "Give the layout a name.",
+    errKey: "That key cannot be used. Try a letter, a number, an arrow, Enter, Space or F1–F12.",
+    errNeedMod: "Add at least one of ⌃ ⌥ ⇧ ⌘.",
+    addFloat: "Add floating zone", floatN: "Floating zone", width: "Width %", height: "Height %", center: "Center",
+    floatHint: "It sits on top of the other zones. Drag it in the drawing to move it.",
+  },
+};
+const LANG_NAMES = { es: "Español", en: "English" };
+const MODS = ["ctrl", "alt", "shift", "cmd"];
+const SYM = { ctrl: "⌃", alt: "⌥", shift: "⇧", cmd: "⌘" };
+const KEYLABEL = { left: "←", right: "→", up: "↑", down: "↓", return: "↩", space: "␣", tab: "⇥" };
+const MIN = 0.05;
+const SNAPS = [1 / 6, 1 / 4, 1 / 3, 1 / 2, 2 / 3, 3 / 4, 5 / 6];
+
+const S = structuredClone(INIT.saved);
+if (!Array.isArray(S.layouts)) S.layouts = [];
+const templates = INIT.templates.map(t => ({ ...t, template: true }));
+if (!S.screens || Array.isArray(S.screens)) S.screens = {};
+// Same as layoutFor in zonas.lua: with no choice, an ultrawide uses S.active and others use Halves.
+const SCREENS = INIT.screens || [];
+const chosenFor = s => S.screens[s.name] ?? (s.wide ? S.active : "mitades");
+const usedOn = l => SCREENS.filter(s => chosenFor(s) === l.id);
+
+let tab = "zones";
+let selId = SCREENS[0] ? chosenFor(SCREENS[0]) : S.active;
+let selPath = null;
+let selFloat = null;
+let recording = null;
+let dirty = false;
+let confirmDelete = false;
+
+const $ = id => document.getElementById(id);
+const lang = () => (STR[S.lang] ? S.lang : STR[INIT.sysLang] ? INIT.sysLang : "en");
+const t = (k, ...a) => (STR[lang()][k] ?? STR.en[k]).replace(/\{(\d)\}/g, (_, i) => a[i]);
+const nameOf = l => (typeof l.name === "string" ? l.name : l.name[lang()] ?? l.name.en);
+const all = () => [...templates, ...S.layouts];
+const sel = () => all().find(l => l.id === selId) || templates[0];
+const keyLabel = k => (k ? KEYLABEL[k] ?? k.toUpperCase() : "—");
+const combo = (mods, k) => MODS.filter(m => mods.includes(m)).map(m => SYM[m]).join("") + keyLabel(k);
+const el = (tag, props = {}, ...kids) => { const e = Object.assign(document.createElement(tag), props); e.append(...kids); return e; };
+
+function say(text, err) { $("msg").textContent = text || ""; $("msg").className = "msg" + (err ? " err" : ""); }
+function changed() { dirty = true; say(t("unsaved")); render(); }
+
+// Zone tree --------------------------------------------------------------------------
+
+const isLeaf = n => !n.children;
+const nodeAt = (root, path) => path.reduce((n, i) => n.children[i], root);
+const samePath = (a, b) => a && b && a.join(".") === b.join(".");
+
+function flatten(n, x, y, w, h, path = [], zones = [], lines = []) {
+  if (isLeaf(n)) { zones.push({ n, x, y, w, h, path }); return { zones, lines }; }
+  let pos = 0;
+  n.children.forEach((c, i) => {
+    const s = n.sizes[i];
+    if (i > 0) lines.push({ node: n, i, x, y, w, h, at: pos });
+    if (n.dir === "h") flatten(c, x + w * pos, y, w * s, h, [...path, i], zones, lines);
+    else flatten(c, x, y + h * pos, w, h * s, [...path, i], zones, lines);
+    pos += s;
+  });
+  return { zones, lines };
+}
+
+const leafKeys = n => (isLeaf(n) ? [n.key || ""] : n.children.flatMap(leafKeys));
+const layoutKeys = l => [...leafKeys(l.root), ...(l.floats || []).map(f => f.key || "")];
+
+function freeKey(l) {
+  const used = layoutKeys(l);
+  return ["1", "2", "3", "4", "5", "6", "7", "8", "9"].find(k => !used.includes(k)) || "";
+}
+
+function splitZone(l, path, dir) {
+  const fresh = { key: freeKey(l) };
+  if (!path.length) { l.root = { dir, sizes: [0.5, 0.5], children: [l.root, fresh] }; return [1]; }
+  const parent = nodeAt(l.root, path.slice(0, -1));
+  const i = path.at(-1);
+  if (parent.dir === dir) {
+    const half = parent.sizes[i] / 2;
+    parent.sizes.splice(i, 1, half, half);
+    parent.children.splice(i + 1, 0, fresh);
+    return [...path.slice(0, -1), i + 1];
+  }
+  parent.children[i] = { dir, sizes: [0.5, 0.5], children: [parent.children[i], fresh] };
+  return [...path, 1];
+}
+
+// A node with one child is replaced by that child, and a child with its parent's direction is
+// flattened into it, so each line in the drawing moves what it looks like it moves.
+function normalize(n) {
+  if (isLeaf(n)) return n;
+  n.children = n.children.map(normalize);
+  if (n.children.length === 1) return n.children[0];
+  const kids = [], sizes = [];
+  n.children.forEach((c, i) => {
+    if (!isLeaf(c) && c.dir === n.dir) c.children.forEach((g, j) => { kids.push(g); sizes.push(n.sizes[i] * c.sizes[j]); });
+    else { kids.push(c); sizes.push(n.sizes[i]); }
+  });
+  n.children = kids;
+  n.sizes = sizes;
+  return n;
+}
+
+function removeZone(l, path) {
+  const parent = nodeAt(l.root, path.slice(0, -1));
+  const i = path.at(-1);
+  const [s] = parent.sizes.splice(i, 1);
+  parent.children.splice(i, 1);
+  parent.sizes[Math.max(0, i - 1)] += s;
+  l.root = normalize(l.root);
+}
+
+// Keys ---------------------------------------------------------------------------------
+
+function keyName(e) {
+  const c = e.code;
+  if (/^Key[A-Z]$/.test(c)) return c.slice(3).toLowerCase();
+  if (/^Digit\d$/.test(c)) return c.slice(5);
+  if (/^Numpad\d$/.test(c)) return "pad" + c.slice(6);
+  if (/^F([1-9]|1[0-2])$/.test(c)) return c.toLowerCase();
+  return { ArrowLeft: "left", ArrowRight: "right", ArrowUp: "up", ArrowDown: "down", Enter: "return", Space: "space", Tab: "tab" }[c] || null;
+}
+
+function record(target) {
+  recording = target;
+  window.webkit.messageHandlers.zonas.postMessage({ type: "record", on: true });
+  say(t("recHelp"));
+  render();
+}
+
+function stopRecording() {
+  recording = null;
+  window.webkit.messageHandlers.zonas.postMessage({ type: "record", on: false });
+}
+
+window.addEventListener("keydown", e => {
+  if (!recording) return;
+  e.preventDefault();
+  if (["Shift", "Control", "Alt", "Meta"].includes(e.key)) return;
+  if (e.key === "Escape") { stopRecording(); say(""); return render(); }
+  const r = recording;
+  let k = e.key === "Backspace" || e.key === "Delete" ? "" : keyName(e);
+  if (k === null) return say(t("errKey"), true);
+  if (r.kind === "translate") {
+    const mods = MODS.filter(m => e[{ ctrl: "ctrlKey", alt: "altKey", shift: "shiftKey", cmd: "metaKey" }[m]]);
+    if (k && !mods.length) return say(t("errNeedMod"), true);
+    S.keys.translate = { mods, key: k };
+  } else if (r.kind === "full") S.keys.full = k;
+  else if (r.kind === "float") sel().floats[r.path[0]].key = k;
+  else nodeAt(sel().root, r.path).key = k;
+  stopRecording();
+  changed();
+});
+
+function recButton(target, label) {
+  const on = recording && recording.kind === target.kind && samePath(recording.path || [], target.path || []);
+  return el("button", { className: "btn" + (on ? " rec" : ""), textContent: on ? t("press") : label, onclick: () => record(target) });
+}
+
+// Validation -------------------------------------------------------------------------
+
+function problem() {
+  const k = S.keys;
+  if (!k.mods.length) return t("errMods");
+  if (k.drag === k.merge) return t("errDragMerge");
+  const tr = combo(k.translate.mods, k.translate.key);
+  for (const l of all()) {
+    if (!l.template && !l.name.trim()) return t("errName");
+    const keys = layoutKeys(l).filter(Boolean);
+    const dup = keys.find((x, i) => keys.indexOf(x) !== i);
+    if (dup) return t("errDup", nameOf(l), keyLabel(dup));
+    if (k.full && keys.includes(k.full)) return t("errFull", nameOf(l), keyLabel(k.full));
+    if (k.translate.key && [...keys, k.full].some(x => x && combo(k.mods, x) === tr)) return t("errTranslate", tr);
+  }
+  return null;
+}
+
+function save() {
+  const err = problem();
+  if (err) return say(err, true);
+  window.webkit.messageHandlers.zonas.postMessage({ type: "save", data: JSON.parse(JSON.stringify(S)) });
+}
+
+// Hammerspoon calls this once it has saved and applied the changes.
+function saved(ok) {
+  if (ok) dirty = false;
+  render();
+  say(ok ? t("saved") : t("saveFail"), !ok);
+}
+
+// Views --------------------------------------------------------------------------------
+
+function preview(l, opts = {}) {
+  const screen = el("div", { className: "screen" + (opts.mini ? " mini" : "") });
+  const scr = usedOn(l).find(s => s.w) || INIT.screen;
+  screen.style.aspectRatio = scr.w + " / " + scr.h;
+  const gx = S.gap / scr.w, gy = S.gap / scr.h;
+  const box = z => ({
+    left: gx + (1 - gx) * z.x, top: gy + (1 - gy) * z.y,
+    width: (1 - gx) * z.w - gx, height: (1 - gy) * z.h - gy,
+  });
+  const { zones, lines } = flatten(l.root, 0, 0, 1, 1);
+  zones.forEach((z, i) => {
+    const b = box(z);
+    const d = el("button", { className: "zone" + (samePath(z.path, selPath) && opts.edit !== undefined ? " sel" : "") });
+    Object.assign(d.style, {
+      left: `calc(${b.left * 100}% + 2px)`, top: `calc(${b.top * 100}% + 2px)`,
+      width: `calc(${b.width * 100}% - 4px)`, height: `calc(${b.height * 100}% - 4px)`,
+    });
+    d.append(el("div", {}, el("b", { textContent: keyLabel(z.n.key) }),
+      el("small", { textContent: opts.mini ? "" : `${Math.round(z.w * scr.w)} × ${Math.round(z.h * scr.h)}` })));
+    if (opts.edit !== undefined) d.onclick = () => { selPath = z.path; selFloat = null; confirmDelete = false; render(); };
+    else d.tabIndex = -1;
+    screen.append(d);
+  });
+  (l.floats || []).forEach((f, i) => {
+    const b = box(f);
+    const d = el("button", { className: "zone float" + (selFloat === i && opts.edit !== undefined ? " sel" : "") });
+    Object.assign(d.style, {
+      left: b.left * 100 + "%", top: b.top * 100 + "%", width: b.width * 100 + "%", height: b.height * 100 + "%",
+    });
+    d.append(el("div", {}, el("b", { textContent: keyLabel(f.key) }),
+      el("small", { textContent: opts.mini ? "" : `${Math.round(f.w * scr.w)} × ${Math.round(f.h * scr.h)}` })));
+    if (opts.edit !== undefined) d.onpointerdown = e => { selFloat = i; selPath = null; confirmDelete = false; if (opts.edit) moveFloat(e, f, screen); else render(); };
+    else d.tabIndex = -1;
+    screen.append(d);
+  });
+  if (opts.edit) {
+    for (const ln of lines) {
+      const h = el("div", { className: "handle " + ln.node.dir });
+      if (ln.node.dir === "h") Object.assign(h.style, { left: (ln.x + ln.w * ln.at) * 100 + "%", top: ln.y * 100 + "%", height: ln.h * 100 + "%" });
+      else Object.assign(h.style, { top: (ln.y + ln.h * ln.at) * 100 + "%", left: ln.x * 100 + "%", width: ln.w * 100 + "%" });
+      h.onpointerdown = e => resize(e, ln, screen, h);
+      screen.append(h);
+    }
+  }
+  return screen;
+}
+
+function resize(e, ln, screen, handle) {
+  const rect = screen.getBoundingClientRect();
+  const n = ln.node, horizontal = n.dir === "h";
+  const start = horizontal ? ln.x : ln.y, len = horizontal ? ln.w : ln.h;
+  const before = n.sizes.slice(0, ln.i - 1).reduce((a, b) => a + b, 0);
+  const pair = n.sizes[ln.i - 1] + n.sizes[ln.i];
+  const minRel = MIN / len;
+  handle.classList.add("on");
+  const move = ev => {
+    let b = horizontal ? (ev.clientX - rect.left) / rect.width : (ev.clientY - rect.top) / rect.height;
+    b = SNAPS.find(s => Math.abs(s - b) < 0.012) ?? Math.round(b * 200) / 200;
+    const w = Math.min(Math.max((b - start) / len - before, minRel), pair - minRel);
+    n.sizes[ln.i - 1] = w;
+    n.sizes[ln.i] = pair - w;
+    dirty = true;
+    say(t("unsaved"));
+    render();
+  };
+  const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); render(); };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up);
+  e.preventDefault();
+}
+
+// Move a floating zone: it snaps to the center when it passes close.
+function moveFloat(e, f, screen) {
+  const rect = screen.getBoundingClientRect();
+  const x0 = e.clientX, y0 = e.clientY, fx = f.x, fy = f.y;
+  let moved = false;
+  const snap = (v, size) => (Math.abs(v + size / 2 - 0.5) < 0.01 ? 0.5 - size / 2 : Math.round(v * 200) / 200);
+  const move = ev => {
+    moved = true;
+    f.x = Math.min(Math.max(snap(fx + (ev.clientX - x0) / rect.width, f.w), 0), 1 - f.w);
+    f.y = Math.min(Math.max(snap(fy + (ev.clientY - y0) / rect.height, f.h), 0), 1 - f.h);
+    dirty = true;
+    say(t("unsaved"));
+    render();
+  };
+  const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); render(); };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up);
+  e.preventDefault();
+  if (!moved) render();
+}
+
+function floatBar(l, i) {
+  const f = l.floats[i];
+  const size = (label, prop) => {
+    const input = el("input", { type: "number", id: "float-" + prop, min: 10, max: 100, value: Math.round(f[prop] * 100) });
+    input.onchange = () => {
+      const v = Math.min(Math.max(Number(input.value) || 10, 10), 100) / 100;
+      const pos = prop === "w" ? "x" : "y";
+      f[pos] = Math.min(Math.max(f[pos] + (f[prop] - v) / 2, 0), 1 - v);
+      f[prop] = v;
+      changed();
+    };
+    return el("label", {}, label, input);
+  };
+  const center = el("button", { className: "btn", textContent: t("center") });
+  center.onclick = () => { f.x = (1 - f.w) / 2; f.y = (1 - f.h) / 2; changed(); };
+  const rm = el("button", { className: "btn danger", textContent: t("remove") });
+  rm.onclick = () => { l.floats.splice(i, 1); selFloat = null; changed(); };
+  const index = flatten(l.root, 0, 0, 1, 1).zones.length + i + 1;
+  return [el("strong", { textContent: t("floatN", index) }), size(t("width"), "w"), size(t("height"), "h"), center, rm,
+    el("span", { className: "spacer" }),
+    el("span", { textContent: t("key") + " " + MODS.filter(m => S.keys.mods.includes(m)).map(m => SYM[m]).join("") }),
+    recButton({ kind: "float", path: [i] }, f.key ? keyLabel(f.key) : t("none"))];
+}
+
+function zonesView() {
+  const l = sel();
+  const edit = !l.template;
+  const list = el("aside");
+  const section = (title, items) => {
+    list.append(el("h2", { textContent: title }));
+    if (!items.length) list.append(el("div", { className: "empty", textContent: t("noneMine") }));
+    for (const it of items) {
+      const b = el("button", { className: "item" + (it.id === l.id ? " sel" : ""), textContent: nameOf(it) });
+      const on = usedOn(it);
+      if (on.length) b.append(el("span", { className: "badge", title: on.map(s => s.name).join(", "),
+        textContent: t("inUse") + (on.length > 1 ? " ×" + on.length : "") }));
+      b.onclick = () => { selId = it.id; selPath = null; selFloat = null; confirmDelete = false; render(); };
+      list.append(b);
+    }
+  };
+  section(t("templates"), templates);
+  section(t("mine"), S.layouts);
+
+  const main = el("main");
+  const name = el("input", { className: "name", id: "layout-name", value: nameOf(l), disabled: !edit });
+  name.oninput = () => { l.name = name.value; dirty = true; say(t("unsaved")); $("save").disabled = false; };
+  name.onchange = () => render();
+  main.append(name, el("p", { className: "hint", textContent: edit ? t("hintEdit") : t("hintTemplate") }), preview(l, { edit }));
+
+  const all_ = flatten(l.root, 0, 0, 1, 1).zones;
+  const z = selPath && all_.find(q => samePath(q.path, selPath));
+  if (edit) {
+    const bar = el("div", { className: "bar" });
+    if (selFloat !== null && l.floats && l.floats[selFloat]) bar.append(...floatBar(l, selFloat));
+    else if (!z) bar.append(el("span", { className: "hint", textContent: t("pickZone") }));
+    else {
+      const index = all_.indexOf(z) + 1;
+      const sh = el("button", { className: "btn", textContent: t("splitH"), disabled: z.w / 2 < MIN });
+      sh.onclick = () => { selPath = splitZone(l, z.path, "h"); changed(); };
+      const sv = el("button", { className: "btn", textContent: t("splitV"), disabled: z.h / 2 < MIN });
+      sv.onclick = () => { selPath = splitZone(l, z.path, "v"); changed(); };
+      const rm = el("button", { className: "btn danger", textContent: t("remove"), disabled: !z.path.length });
+      rm.onclick = () => { removeZone(l, z.path); selPath = null; changed(); };
+      bar.append(el("strong", { textContent: t("zoneN", index) }), sh, sv, rm, el("span", { className: "spacer" }),
+        el("span", { textContent: t("key") + " " + MODS.filter(m => S.keys.mods.includes(m)).map(m => SYM[m]).join("") }),
+        recButton({ kind: "zone", path: z.path }, z.n.key ? keyLabel(z.n.key) : t("none")));
+    }
+    main.append(bar);
+    if (selFloat !== null) main.append(el("p", { className: "hint", textContent: t("floatHint") }));
+  }
+
+  const copy = el("button", { className: "btn", textContent: t("copy") });
+  copy.onclick = () => {
+    const c = { id: "d" + Date.now(), name: nameOf(l) + t("copySuffix"), root: structuredClone(l.root), floats: structuredClone(l.floats || []) };
+    S.layouts.push(c);
+    selId = c.id;
+    selPath = null;
+    selFloat = null;
+    changed();
+    $("layout-name").focus();
+    $("layout-name").select();
+  };
+  const del = el("button", { className: "btn danger", textContent: confirmDelete ? t("delSure") : t("del"), disabled: !edit });
+  del.onclick = () => {
+    if (!confirmDelete) { confirmDelete = true; return render(); }
+    S.layouts.splice(S.layouts.indexOf(l), 1);
+    for (const [name, id] of Object.entries(S.screens)) if (id === l.id) delete S.screens[name];
+    if (S.active === l.id) S.active = templates[0].id;
+    selId = SCREENS[0] ? chosenFor(SCREENS[0]) : S.active;
+    selPath = null;
+    confirmDelete = false;
+    changed();
+  };
+  const uses = SCREENS.map(s => {
+    const on = chosenFor(s) === l.id;
+    const b = el("button", { className: "btn", textContent: t(on ? "inUseOn" : "useOn", s.name), disabled: on });
+    b.onclick = () => { S.screens[s.name] = l.id; save(); };
+    return b;
+  });
+  const add = el("button", { className: "btn", textContent: t("addFloat"), disabled: !edit });
+  add.onclick = () => {
+    l.floats = l.floats || [];
+    l.floats.push({ x: 0.25, y: 0.15, w: 0.5, h: 0.7, key: freeKey(l) });
+    selFloat = l.floats.length - 1;
+    selPath = null;
+    changed();
+  };
+  main.append(el("div", { className: "actions" }, copy, add, del, el("span", { className: "spacer" }), ...uses));
+  return el("div", { className: "zones" }, list, main);
+}
+
+function card(title, help, ...body) {
+  return el("section", { className: "card" }, el("h3", { textContent: title }), el("p", { textContent: help }), el("div", { className: "row" }, ...body));
+}
+
+function keysView() {
+  const k = S.keys;
+  const mods = MODS.map(m => {
+    const box = el("input", { type: "checkbox", id: "mod-" + m, checked: k.mods.includes(m) });
+    box.onchange = () => { k.mods = MODS.filter(x => x === m ? box.checked : k.mods.includes(x)); changed(); };
+    return el("label", { className: "mod" }, box, t(m));
+  });
+  const pick = (id, value, options, onchange) => {
+    const s = el("select", { id });
+    for (const m of options) s.append(el("option", { value: m, textContent: t(m), selected: m === value }));
+    s.onchange = () => onchange(s.value);
+    return s;
+  };
+  const restore = el("button", { className: "btn", textContent: t("restore") });
+  restore.onclick = () => { S.keys = structuredClone(INIT.defaults.keys); changed(); };
+  return el("div", { className: "page" },
+    card(t("moveTitle"), t("moveHelp"), ...mods),
+    card(t("fullTitle"), t("fullHelp"), el("kbd", { textContent: MODS.filter(m => k.mods.includes(m)).map(m => SYM[m]).join("") || "—" }),
+      recButton({ kind: "full" }, k.full ? keyLabel(k.full) : t("none"))),
+    card(t("dragTitle"), t("dragHelp"), pick("drag", k.drag, ["shift", "cmd", "alt"], v => { k.drag = v; changed(); })),
+    card(t("mergeTitle"), t("mergeHelp"), pick("merge", k.merge, ["ctrl", "cmd", "alt", "shift"], v => { k.merge = v; changed(); })),
+    card(t("translateTitle"), t("translateHelp"),
+      recButton({ kind: "translate" }, k.translate.key ? combo(k.translate.mods, k.translate.key) : t("none"))),
+    el("div", { className: "actions" }, restore));
+}
+
+function generalView() {
+  const langSel = el("select", { id: "lang" });
+  langSel.append(el("option", { value: "auto", textContent: t("auto", LANG_NAMES[INIT.sysLang] || "English"), selected: S.lang === "auto" }));
+  for (const [code, label] of Object.entries(LANG_NAMES)) langSel.append(el("option", { value: code, textContent: label, selected: S.lang === code }));
+  langSel.onchange = () => { S.lang = langSel.value; changed(); };
+  const gap = el("input", { type: "range", id: "gap", min: 0, max: 40, step: 2, value: S.gap });
+  const out = el("kbd", { textContent: S.gap + " px" });
+  const active = () => all().find(l => l.id === (SCREENS[0] ? chosenFor(SCREENS[0]) : S.active)) || templates[0];
+  let mini = preview(active(), { mini: true });
+  gap.oninput = () => {
+    S.gap = Number(gap.value);
+    out.textContent = S.gap + " px";
+    mini.replaceWith(mini = preview(active(), { mini: true }));
+    dirty = true;
+    say(t("unsaved"));
+    $("save").disabled = false;
+  };
+  return el("div", { className: "page" },
+    card(t("langTitle"), t("langHelp"), langSel),
+    el("section", { className: "card" }, el("h3", { textContent: t("gapTitle") }), el("p", { textContent: t("gapHelp") }),
+      el("div", { className: "row" }, gap, out), mini));
+}
+
+function render() {
+  document.documentElement.lang = lang();
+  for (const name of ["zones", "keys", "general"]) {
+    const b = $("tab-" + name);
+    b.textContent = t(name);
+    b.className = "tab" + (tab === name ? " on" : "");
+    b.onclick = () => { tab = name; render(); };
+  }
+  $("save").textContent = t("save");
+  $("save").disabled = !dirty;
+  $("save").onclick = save;
+  const view = $("view");
+  const scroll = view.scrollTop;
+  view.replaceChildren(tab === "zones" ? zonesView() : tab === "keys" ? keysView() : generalView());
+  view.scrollTop = scroll;
+}
+
+render();
+</script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+{
+  "lang": "auto",
+  "gap": 0,
+  "active": "centro34-lectura",
+  "keys": { "mods": ["ctrl", "alt"], "full": "return", "drag": "shift", "merge": "ctrl",
+            "translate": { "mods": ["cmd", "alt"], "key": "t" } },
+  "layouts": []
+}
