@@ -1,9 +1,5 @@
 import { expect, test } from "claude-code/testing";
-import { clip, describe, excerpt, firstLine } from "./text.ts";
-
-test("firstLine skips blank lines and markdown marks", () => {
-  expect(firstLine("\n\n## Done: the tests pass\nmore")).toBe("Done: the tests pass");
-});
+import { clip, describe, excerpt } from "./text.ts";
 
 test("clip shortens long text", () => {
   expect(clip("a".repeat(200), 10)).toBe("aaaaaaaaa…");

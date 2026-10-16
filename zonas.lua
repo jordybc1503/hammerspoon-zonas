@@ -10,15 +10,15 @@ local FILE = DIR .. "zonas.json"
 local function leaf(key) return { key = key } end
 local function split(dir, sizes, children) return { dir = dir, sizes = sizes, children = children } end
 
+-- Free sides of 1/6 and three center columns that together are as wide as a 34" monitor.
+local CENTER34 = split("h", { 1 / 6, 2 / 9, 2 / 9, 2 / 9, 1 / 6 },
+  { leaf("left"), leaf("1"), leaf("2"), leaf("3"), leaf("right") })
+
 local TEMPLATES = {
-  { id = "centro34", name = { es = 'Centro 34"', en = 'Center 34"' },
-    root = split("h", { 1 / 6, 2 / 9, 2 / 9, 2 / 9, 1 / 6 },
-      { leaf("left"), leaf("1"), leaf("2"), leaf("3"), leaf("right") }) },
+  { id = "centro34", name = { es = 'Centro 34"', en = 'Center 34"' }, root = CENTER34 },
   -- Floating zone 4: a 16:9 24" monitor (95 % of the height), at the bottom. A 16:9 29" does not fit: the Dell is 34 cm tall.
   { id = "centro34-lectura", name = { es = 'Centro 34" + lectura 24"', en = 'Center 34" + 24" reading' },
-    root = split("h", { 1 / 6, 2 / 9, 2 / 9, 2 / 9, 1 / 6 },
-      { leaf("left"), leaf("1"), leaf("2"), leaf("3"), leaf("right") }),
-    floats = { { x = 0.2771, y = 0.05, w = 0.4459, h = 0.95, key = "4" } } },
+    root = CENTER34, floats = { { x = 0.2771, y = 0.05, w = 0.4459, h = 0.95, key = "4" } } },
   { id = "mitades", name = { es = "Mitades", en = "Halves" },
     root = split("h", { 1 / 2, 1 / 2 }, { leaf("1"), leaf("2") }) },
   { id = "tercios", name = { es = "Tercios", en = "Thirds" },
@@ -160,24 +160,20 @@ local function valid(d)
   return true
 end
 
+-- Settings saved by an older version lack the newer fields: take them from the defaults. Only
+-- fields: a list such as the modifier keys is the user's choice, never padded with defaults.
+local function fill(d, defaults)
+  for k, v in pairs(defaults) do
+    if d[k] == nil then d[k] = clone({ v })[1]
+    elseif type(v) == "table" and #v == 0 and type(d[k]) == "table" then fill(d[k], v) end
+  end
+end
+M._fill = fill -- for a check from the hs command line
+
 local function load()
   local d = hs.fs.attributes(FILE) and hs.json.read(FILE)
   if type(d) ~= "table" then return clone(DEFAULTS) end
-  for k, v in pairs(DEFAULTS) do
-    if d[k] == nil then d[k] = clone({ v })[1] end
-  end
-  for _, part in ipairs({ "keys", "pet" }) do
-    if type(d[part]) == "table" then
-      for k, v in pairs(DEFAULTS[part]) do
-        if d[part][k] == nil then d[part][k] = clone({ v })[1] end
-      end
-    end
-  end
-  if type(d.pet) == "table" and type(d.pet.events) == "table" then
-    for k, v in pairs(DEFAULTS.pet.events) do
-      if d.pet.events[k] == nil then d.pet.events[k] = v end
-    end
-  end
+  fill(d, DEFAULTS)
   return valid(d) and d or clone(DEFAULTS)
 end
 
@@ -334,9 +330,12 @@ local function showZones(screen, picked)
   end
 end
 
--- The window under the mouse, not the focused one: ⌘ + drag moves a background window.
+-- The window under the mouse. Usually the focused one; ⌘ + drag moves a background window, and
+-- only then is every app asked for its windows.
 local function windowAt(p)
   local point = hs.geometry.point(p.x, p.y)
+  local focused = hs.window.focusedWindow()
+  if focused and focused:isStandard() and point:inside(focused:frame()) then return focused end
   for _, w in ipairs(hs.window.orderedWindows()) do
     if w:isStandard() and point:inside(w:frame()) then return w end
   end
@@ -355,7 +354,7 @@ local function onDrag(e)
   end
   local flags = e:getFlags()
   if not flags[saved.keys.drag] then hideZones(); return false end
-  local mouse = hs.mouse.absolutePosition()
+  local mouse = e:location()
   -- Asking a window where it is goes through Accessibility and can wait on a slow app, so it is
   -- asked once to find the window and then only until it is seen moving.
   if not drag.searched then
@@ -440,7 +439,7 @@ end
 -- It replaces the Hammerspoon icon, so it carries its options too.
 -- The zones listed are those of the focused window's screen, the window that will move.
 local function menuItems()
-  local k = saved.keys
+  local k, pet = saved.keys, require("mascota")
   local win = hs.window.focusedWindow()
   local screen = win and win:screen() or hs.screen.mainScreen()
   local items = { { title = M.t("layout", screen:name(), nameOf(layoutFor(screen))), disabled = true } }
@@ -468,8 +467,7 @@ local function menuItems()
     { title = M.t("edit"), fn = openEditor },
     { title = "-" },
     { title = M.translateCombo() .. "     " .. M.t("translate"), disabled = true },
-    { title = M.t("pet", require("mascota").name() or M.t("petDefault")), checked = require("mascota").enabled(),
-      fn = function() require("mascota").toggle() end },
+    { title = M.t("pet", pet.name() or M.t("petDefault")), checked = pet.enabled(), fn = pet.toggle },
     { title = "-" },
     { title = M.t("guide"), fn = function() hs.urlevent.openURL("https://github.com/jordybc1503/hammerspoon-zonas#readme") end },
     { title = M.t("reload"), fn = hs.reload },
@@ -485,10 +483,12 @@ function M.start(acts)
   apply()
   local types = hs.eventtap.event.types
   -- Every mouse drag on the Mac would pass through the drag listener, so it runs only while the
-  -- drag key is held (a key press is a rare event); a mouse-up turns it off when the key is gone.
+  -- drag key is held (a key press is a rare event). Released mid-drag, it waits for the mouse-up.
   dragTap = hs.eventtap.new({ types.leftMouseDragged, types.leftMouseUp }, onDrag)
   modTap = hs.eventtap.new({ types.flagsChanged }, function(e)
-    if e:getFlags()[saved.keys.drag] and not dragTap:isEnabled() then dragTap:start() end
+    local held = e:getFlags()[saved.keys.drag]
+    if held and not dragTap:isEnabled() then dragTap:start()
+    elseif not held and not drag.searched and dragTap:isEnabled() then dragTap:stop(); hideZones() end
     return false
   end):start()
   -- macOS turns off a listener that answered too slowly once; turn it back on.

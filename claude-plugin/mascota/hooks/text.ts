@@ -13,10 +13,6 @@ export function excerpt(answer: string, max = 4000): string {
   return text.length > max ? text.slice(0, max - 1) + "…" : text;
 }
 
-export function firstLine(answer: string): string {
-  const line = answer.split("\n").map((l) => l.replace(/^[#>*\-\s]+/, "").trim()).find(Boolean);
-  return clip(line ?? "");
-}
 
 // What the tool is about to do, in one line: the command, the file, or the arguments.
 export function describe(tool: string, input: unknown): string {

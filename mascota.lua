@@ -45,7 +45,8 @@ local status = {} -- session → { state, at }
 local pet -- the pet on screen: { canvas, web, items, index, size, ... } or nil
 local drag -- the pet being dragged: { from, at, moved }
 local sheet, petName, loadedId = nil, nil, nil
-local watcher, mouseTap, tapGuard
+local watcher, mouseTap, tapGuard, idleTimer
+local queue, waitingSince = {}, 0 -- messages waiting for you to pause, before the pet comes out
 
 -- Pet sprites ----------------------------------------------------------------------------
 
@@ -182,7 +183,7 @@ local function answer(req, value) write(INBOX .. "/" .. req.id .. ".answer", val
 local function counts()
   local working, waiting, now = 0, 0, os.time()
   for session, st in pairs(status) do
-    if now - st.at > 3 * 3600 then status[session] = nil
+    if now - st.at > 3 * 3600 then status[session], windows[session] = nil, nil
     elseif st.state == "working" then working = working + 1
     elseif st.state == "waiting" then waiting = waiting + 1 end
   end
@@ -349,11 +350,10 @@ local function spotFor(req)
 end
 
 -- The bubble stands to the pet's left, bottoms lined up.
-local function placeBubble(moveOnly)
+local function placeBubble()
   if not pet.web then return end
   local f = pet.canvas:frame()
-  local at = { x = f.x - GAP - BW - 12, y = f.y + f.h - pet.webH }
-  if moveOnly then pet.web:topLeft(at) else pet.web:frame({ x = at.x, y = at.y, w = BW + 12, h = pet.webH }) end
+  pet.web:frame({ x = f.x - GAP - BW - 12, y = f.y + f.h - pet.webH, w = BW + 12, h = pet.webH })
 end
 
 -- A new walk or a drag ends the run in progress, which would otherwise keep moving the pet.
@@ -375,7 +375,6 @@ local function runTo(dest, from, arrive)
   local start = hs.timer.secondsSinceEpoch()
   pet.running = true
   if pet.web then pet.web:hide() end
-  if pet.runTimer then pet.runTimer:stop() end
   pet.runTimer = hs.timer.doEvery(1 / 30, function()
     local elapsed = hs.timer.secondsSinceEpoch() - start
     local k = math.min(1, elapsed / seconds)
@@ -439,6 +438,12 @@ local function removeAt(i, reply)
 end
 
 local function removeSession(session, reply)
+  for i = #queue, 1, -1 do
+    if queue[i].session == session then
+      if queue[i].wait then answer(queue[i], reply or "terminal") end
+      table.remove(queue, i)
+    end
+  end
   if not pet or pet.leaving then return end
   for i = #pet.items, 1, -1 do
     if pet and pet.items[i] and pet.items[i].session == session then removeAt(i, reply) end
@@ -496,7 +501,7 @@ local function create(req)
   pet.web = hs.webview.new({ x = dest.x - GAP - BW - 12, y = dest.y, w = BW + 12, h = pet.webH }, {}, uc)
     :windowStyle({ "borderless", "nonactivating" })
     :transparent(true)
-    :allowTextEntry(true)
+    :allowTextEntry(false) -- it cannot take the keyboard from what you are typing until you click it
     :shadow(false)
     :level(hs.drawing.windowLevels.floating)
     :behaviorAsLabels({ "canJoinAllSpaces", "stationary" })
@@ -510,9 +515,30 @@ end
 
 -- A new message joins the pet on screen (one per session: a newer one replaces the older) and
 -- the bubble keeps showing what you are reading.
-local function add(req)
+local add
+
+-- The pet comes out at a pause in your typing and clicking (1.5 s), so it never jumps in front of
+-- what you are writing; after 30 s of non-stop work it comes out anyway.
+local function comeOut()
+  if hs.host.idleTime() < 1.5 and hs.timer.secondsSinceEpoch() - waitingSince < 30 then return end
+  idleTimer:stop()
+  local waiting = queue
+  queue = {}
+  if #waiting == 0 then return end
+  create(waiting[1])
+  for i = 2, #waiting do add(waiting[i]) end
+end
+
+add = function(req)
   if pet and pet.leaving then remove() end
-  if not pet then return create(req) end
+  if not pet then
+    queue[#queue + 1] = req
+    if idleTimer:running() then return end
+    waitingSince = hs.timer.secondsSinceEpoch()
+    if hs.host.idleTime() >= 1.5 then return comeOut() end
+    idleTimer:start()
+    return
+  end
   local current = pet.items[pet.index]
   for i = #pet.items, 1, -1 do
     local old = pet.items[i]
@@ -609,6 +635,7 @@ local function onMouse(e)
   local x, y = math.floor(p.x - f.x), math.floor(p.y - f.y)
   hs.timer.doAfter(0, function()
     if not (pet and pet.web) then return end
+    pet.web:allowTextEntry(true)
     local win = pet.web:hswindow()
     if win and hs.window.focusedWindow() ~= win then
       pet.back = hs.window.focusedWindow()
@@ -657,9 +684,11 @@ local function handle(req)
     return removeSession(req.session, "terminal")
   end
   local p = settings()
-  local w, focused = windowOf(req.session), hs.window.focusedWindow()
-  -- Switched off, not wanted for this event, or you are already in that window: no pet.
-  if not p.enabled or not p.events[EVENT[req.kind]] or (w and focused and w:id() == focused:id()) then
+  local wanted = p.enabled and p.events[EVENT[req.kind]]
+  -- Switched off, not wanted for this event, or you are already in that window: no pet. The
+  -- settings come first: asking windows can wait on a slow app.
+  local w, focused = wanted and windowOf(req.session), wanted and hs.window.focusedWindow()
+  if not wanted or (w and focused and w:id() == focused:id()) then
     if req.wait then answer(req, "terminal") end
     return
   end
@@ -701,6 +730,7 @@ function M.start()
     if file:match("%.json$") or file:match("%.answer$") then os.remove(INBOX .. "/" .. file) end
   end
   watcher = hs.pathwatcher.new(INBOX, poll):start()
+  idleTimer = hs.timer.new(0.5, comeOut)
   local types = hs.eventtap.event.types
   -- Every click on the Mac passes through this listener, so it runs only while the pet is out.
   mouseTap = hs.eventtap.new({ types.leftMouseDown, types.leftMouseDragged, types.leftMouseUp }, onMouse)

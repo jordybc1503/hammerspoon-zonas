@@ -11,20 +11,21 @@ printf '%s' "$2" > "$f.tmp" && mv "$f.tmp" "$f.json"
 i=0; while [ -f "$f.json" ] && [ $i -lt 15 ]; do sleep 0.2; i=$((i+1)); done
 if [ -f "$f.json" ]; then rm -f "$f.json"; echo off; exit 0; fi
 [ "$3" = 1 ] || exit 0
-i=0; while [ ! -f "$f.answer" ] && [ $i -lt 2900 ]; do sleep 0.2; i=$((i+1)); done
+i=0; while [ ! -f "$f.answer" ] && [ $i -lt 1160 ]; do sleep 0.5; i=$((i+1)); done
 [ -f "$f.answer" ] && cat "$f.answer" && rm -f "$f.answer"
 `;
 
 // A reload starts a new id: Hammerspoon learns the window again at the next prompt.
 const session = crypto.randomUUID();
 let count = 0;
+let label: string | undefined; // the project folder, for the bubble
 const ASKING_MODES = new Set(["default", "acceptEdits", "plan"]);
 let mode: string | undefined;
 let lastAsk: { tool: string; detail: string } | undefined;
 
 async function send($: EngineInterface, kind: string, fields: object, wait = false): Promise<string> {
   const id = `${session}-${++count}`;
-  const label = (await $.session.cwd()).split("/").pop() ?? "";
+  label ??= (await $.session.cwd()).split("/").pop() ?? "";
   const request = JSON.stringify({ kind, session, id, label, wait, ...fields });
   const run = await $.process.run(["/bin/sh", "-c", SCRIPT, "mascota", id, request, wait ? "1" : "0"], {
     timeoutMs: 600_000,

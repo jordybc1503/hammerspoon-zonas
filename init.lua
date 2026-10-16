@@ -4,6 +4,9 @@
 -- the mouse. No network and no API key.
 -- The window zones, the shortcuts and the ▦ menu live in zonas.lua.
 require("hs.ipc")
+-- Every window question goes through Accessibility and waits up to 6 s for an app that does not
+-- answer, with all of Hammerspoon stopped. Half a second is plenty for a healthy app.
+hs.window.timeout(0.5)
 local zonas = require("zonas")
 
 
@@ -102,8 +105,15 @@ end
 -- hs -c 'traducir("scope")'
 function traducir(word)
   -- In the background: hs.execute would stop Hammerspoon (and every mouse listener) while it waits.
-  lookup = hs.task.new(DICT, function(_, out) lookup = nil; showEntry(word, out) end, { word })
-  if not (lookup and lookup:start()) then lookup = nil; showEntry(word, "") end
+  if lookup then lookup:terminate() end
+  local task
+  task = hs.task.new(DICT, function(_, out)
+    if lookup ~= task then return end -- a newer lookup replaced this one
+    lookup = nil
+    showEntry(word, out)
+  end, { word })
+  lookup = task
+  if not (task and task:start()) then lookup = nil; showEntry(word, "") end
 end
 
 local function translateSelection()
