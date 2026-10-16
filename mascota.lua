@@ -286,11 +286,11 @@ local function bubbleHTML(req, index, total)
       opts[#opts + 1] = string.format('<button class="opt" data-i="%d">%s<small>%s</small></button>', i - 1, esc(o.label), esc(o.description))
     end
     controls = '<div class="col">' .. table.concat(opts) .. "</div>"
-      .. '<div class="row"><input id="text" placeholder="' .. esc(t("other")) .. '">'
+      .. '<div class="row"><input id="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="' .. esc(t("other")) .. '">'
       .. '<button class="send" id="send">' .. esc(t("send")) .. "</button></div>"
       .. '<div class="row">' .. go .. "</div>"
   elseif req.kind == "done" then
-    controls = '<div class="row"><input id="text" placeholder="' .. esc(t("reply")) .. '">'
+    controls = '<div class="row"><input id="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="' .. esc(t("reply")) .. '">'
       .. '<button class="send" id="send">' .. esc(t("send")) .. "</button></div>"
       .. '<div class="row">' .. go .. "</div>"
   else
