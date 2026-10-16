@@ -142,7 +142,6 @@ end
 -- One step of the pet's life: it plays its mood once, then breathes (idle) and plays it again now
 -- and then; while you move the mouse it turns to look at it. Nothing while it runs or is dragged.
 local function animate()
-  if drag and not hs.eventtap.checkMouseButtons().left then drag = nil end
   if pet.running and not (pet.runTimer and pet.runTimer:running()) then pet.running = false end
   if not sheet or pet.running or drag then return end
   local now = hs.timer.secondsSinceEpoch()
@@ -584,17 +583,25 @@ local function onMouse(e)
     drag = { from = p, at = pet.canvas:topLeft(), moved = false }
     return true
   end
+  -- Only the pet moves while dragged: the bubble hides and comes back where you let go.
   if drag and kind == types.leftMouseDragged then
     local dx, dy = p.x - drag.from.x, p.y - drag.from.y
-    drag.moved = drag.moved or math.abs(dx) + math.abs(dy) > 3
-    pet.canvas:topLeft({ x = drag.at.x + dx, y = drag.at.y + dy })
-    placeBubble(true)
+    if not drag.moved and math.abs(dx) + math.abs(dy) > 3 then
+      drag.moved = true
+      if pet.web then pet.web:hide() end
+    end
+    if drag.moved then pet.canvas:topLeft({ x = drag.at.x + dx, y = drag.at.y + dy }) end
     return true
   end
   if drag and kind == types.leftMouseUp then
     local moved = drag.moved
     drag = nil
-    if moved then pet.dragged = true else hs.timer.doAfter(0, function() onMessage({ action = "go" }) end) end
+    if moved then
+      pet.dragged = true
+      if pet.web then placeBubble(); pet.web:show() end
+    else
+      hs.timer.doAfter(0, function() onMessage({ action = "go" }) end)
+    end
     return true
   end
   local f = kind == types.leftMouseDown and pet.web and pet.web:isVisible() and pet.web:frame()
