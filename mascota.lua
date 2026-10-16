@@ -44,7 +44,7 @@ local windows = {} -- session → id of the window you last typed into
 local status = {} -- session → { state, at }
 local pet -- the pet on screen: { canvas, web, items, index, size, ... } or nil
 local drag -- the pet being dragged: { from, at, moved }
-local sheet, frames, petName, loadedId = nil, {}, nil, nil
+local sheet, petName, loadedId = nil, nil, nil
 local watcher, focusFilter, mouseTap, tapGuard
 
 -- Pet sprites ----------------------------------------------------------------------------
@@ -61,7 +61,7 @@ end
 -- id "" takes the first pet found; "drawn" (or no pet) leaves the drawn stand-in.
 local function loadPet(id)
   if id == loadedId then return end
-  loadedId, sheet, frames, petName = id, nil, {}, nil
+  loadedId, sheet, petName = id, nil, nil
   if id == "drawn" or not hs.fs.attributes(PETS) then return end
   for dir in hs.fs.dir(PETS) do
     if id == "" or dir == id then
@@ -78,7 +78,11 @@ function M.pets()
   for dir in hs.fs.dir(PETS) do
     local info, img = readPet(dir)
     if img then
-      local thumb = img:croppedCopy({ x = 0, y = 0, w = FW, h = FH }):setSize({ w = 96, h = 104 }, false)
+      -- The first frame, drawn small through a canvas: a crop of the sheet would hold ~56 MB.
+      local c = hs.canvas.new({ x = 0, y = 0, w = 96, h = 104 })
+      c:appendElements({ type = "image", image = img, imageScaling = "scaleToFit", frame = { x = 0, y = 0, w = 8 * 96, h = 11 * 104 } })
+      local thumb = c:imageFromCanvas()
+      c:delete()
       list[#list + 1] = { id = dir, name = info.displayName or dir, description = info.description or "",
         thumb = thumb:encodeAsURLString() }
     end
@@ -86,10 +90,14 @@ function M.pets()
   return list
 end
 
-local function cell(row, col)
-  local key = row * 8 + col
-  frames[key] = frames[key] or sheet:croppedCopy({ x = col * FW, y = row * FH, w = FW, h = FH })
-  return frames[key]
+-- A frame is a place on the sheet, not an image of its own: every cut of the sheet held about
+-- 56 MB (1.2 GB for the pet's frames), so the canvas shows the whole sheet and moves it under a
+-- window the size of one frame.
+local function cell(row, col) return { row = row, col = col } end
+
+local function draw(c)
+  local w, h = pet.size.w, pet.size.h
+  pet.canvas[1].frame = { x = -c.col * w, y = -c.row * h, w = 8 * w, h = 11 * h }
 end
 
 local function frame(mood, n) return cell(ROWS[mood][1], n % ROWS[mood][2]) end
@@ -141,7 +149,7 @@ local function animate()
   pet.mouse = mouse
   if pet.look and not pet.once and pet.movedAt and now - pet.movedAt < 1.2 then
     local f = pet.canvas:frame()
-    pet.canvas[1].image = look(math.atan(mouse.x - (f.x + f.w / 2), (f.y + f.h / 3) - mouse.y))
+    draw(look(math.atan(mouse.x - (f.x + f.w / 2), (f.y + f.h / 3) - mouse.y)))
     return
   end
   if now - pet.at < SPEED[pet.mood] then return end
@@ -152,7 +160,7 @@ local function animate()
     else pet.n = 0 end
   end
   if pet.mood == "idle" and pet.again and now >= pet.again then play(pet.home, true) end
-  pet.canvas[1].image = frame(pet.mood, pet.n)
+  draw(frame(pet.mood, pet.n))
 end
 
 -- Files ------------------------------------------------------------------------------------
@@ -355,7 +363,7 @@ local function runTo(dest, from, arrive)
     local elapsed = hs.timer.secondsSinceEpoch() - start
     local k = math.min(1, elapsed / seconds)
     local eased = 1 - (1 - k) ^ 2
-    pet.canvas[1].image = frame(mood, math.floor(elapsed / SPEED[mood]))
+    draw(frame(mood, math.floor(elapsed / SPEED[mood])))
     pet.canvas:topLeft({ x = from.x + (dest.x - from.x) * eased, y = from.y + (dest.y - from.y) * eased })
     if k >= 1 then
       pet.runTimer:stop()
@@ -433,8 +441,8 @@ local function create(req)
   pet.canvas:behavior({ "canJoinAllSpaces", "stationary" })
   pet.canvas:clickActivating(false)
   if sheet then
-    pet.canvas:appendElements({ type = "image", image = frame("idle", 0), imageScaling = "scaleProportionally",
-      frame = { x = 0, y = 0, w = pet.size.w, h = pet.size.h } })
+    pet.canvas:appendElements({ type = "image", image = sheet, imageScaling = "scaleToFit",
+      frame = { x = 0, y = 0, w = 8 * pet.size.w, h = 11 * pet.size.h } })
     play(MOOD[req.kind], true)
   else
     pet.canvas:appendElements(table.unpack(drawnPet(req.kind, pet.size)))
