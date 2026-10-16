@@ -68,7 +68,7 @@ local MOD = { ctrl = "⌃", alt = "⌥", shift = "⇧", cmd = "⌘" }
 local KEYLABEL = { left = "←", right = "→", up = "↑", down = "↓", ["return"] = "↩", space = "␣", tab = "⇥" }
 local FULL = { x = 0, y = 0, w = 1, h = 1 }
 
-local saved, actions, editor, menu, dragTap, screenWatcher, tapGuard
+local saved, actions, editor, menu, dragTap, modTap, screenWatcher, tapGuard
 local hotkeys = {}
 
 local function clone(t) return hs.json.decode(hs.json.encode(t)) end
@@ -348,6 +348,7 @@ local function onDrag(e)
     local win, z = drag.win, drag.zone
     hideZones()
     drag = {}
+    if not e:getFlags()[saved.keys.drag] then dragTap:stop() end
     -- Wait for macOS to finish the drop before placing the window.
     if win and z then hs.timer.doAfter(0.05, function() place(win, z) end) end
     return false
@@ -355,14 +356,21 @@ local function onDrag(e)
   local flags = e:getFlags()
   if not flags[saved.keys.drag] then hideZones(); return false end
   local mouse = hs.mouse.absolutePosition()
-  if not drag.win then
+  -- Asking a window where it is goes through Accessibility and can wait on a slow app, so it is
+  -- asked once to find the window and then only until it is seen moving.
+  if not drag.searched then
+    drag.searched = true
     drag.win = windowAt(mouse)
     drag.start = drag.win and drag.win:topLeft()
     return false
   end
+  if not drag.win then return false end
   -- Only if the window moves: Shift + drag also selects text.
-  local p = drag.win:topLeft()
-  if p.x == drag.start.x and p.y == drag.start.y then return false end
+  if not drag.moving then
+    local p = drag.win:topLeft()
+    if p.x == drag.start.x and p.y == drag.start.y then return false end
+    drag.moving = true
+  end
   -- On another screen, show that screen's zones, from its own layout.
   local screen = hs.mouse.getCurrentScreen()
   if drag.screen ~= screen then
@@ -372,6 +380,10 @@ local function onDrag(e)
   local cur = zoneAt(drag.zones, screen, mouse)
   if not cur then return false end
   if flags[saved.keys.merge] then drag.anchor = drag.anchor or cur else drag.anchor = nil end
+  -- Redraw only when the zones under the mouse change, not on every drag event.
+  local key = (drag.anchor or cur) .. ":" .. cur
+  if key == drag.key and drag.overlay then return false end
+  drag.key = key
   local picked
   drag.zone, picked = span(drag.zones, drag.anchor or cur, cur)
   showZones(screen, picked)
@@ -472,9 +484,15 @@ function M.start(acts)
   actions = acts or {}
   apply()
   local types = hs.eventtap.event.types
-  dragTap = hs.eventtap.new({ types.leftMouseDragged, types.leftMouseUp }, onDrag):start()
-  -- macOS turns off a mouse listener that answered too slowly once; turn it back on.
-  tapGuard = hs.timer.doEvery(3, function() if not dragTap:isEnabled() then dragTap:start() end end)
+  -- Every mouse drag on the Mac would pass through the drag listener, so it runs only while the
+  -- drag key is held (a key press is a rare event); a mouse-up turns it off when the key is gone.
+  dragTap = hs.eventtap.new({ types.leftMouseDragged, types.leftMouseUp }, onDrag)
+  modTap = hs.eventtap.new({ types.flagsChanged }, function(e)
+    if e:getFlags()[saved.keys.drag] and not dragTap:isEnabled() then dragTap:start() end
+    return false
+  end):start()
+  -- macOS turns off a listener that answered too slowly once; turn it back on.
+  tapGuard = hs.timer.doEvery(3, function() if not modTap:isEnabled() then modTap:start() end end)
   screenWatcher = hs.screen.watcher.new(apply):start()
   menu = hs.menubar.new():setTitle("▦"):setTooltip(M.t("title")):setMenu(menuItems)
   hs.menuIcon(false)

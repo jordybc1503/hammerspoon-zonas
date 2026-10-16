@@ -86,10 +86,9 @@ local function show(title, body)
   }, function() hide(); return false end):start()
 end
 
--- Global on purpose, so you can test it from a terminal without the mouse:
--- hs -c 'traducir("scope")'
-function traducir(word)
-  local output = hs.execute(string.format("%q %q", DICT, word))
+local lookup -- the dictionary task running now, kept so it is not collected
+
+local function showEntry(word, output)
   output = (output or ""):match("^%s*(.-)%s*$")
   if output == "" then
     return show(word, zonas.t("notInDict"))
@@ -97,6 +96,14 @@ function traducir(word)
   -- The first token is the word itself: it goes in the title, not the body.
   local body = output:gsub("^" .. word:gsub("%W", "%%%0") .. "%s*", "")
   show(word, (body:gsub("▸", "\n  · ")))
+end
+
+-- Global on purpose, so you can test it from a terminal without the mouse:
+-- hs -c 'traducir("scope")'
+function traducir(word)
+  -- In the background: hs.execute would stop Hammerspoon (and every mouse listener) while it waits.
+  lookup = hs.task.new(DICT, function(_, out) lookup = nil; showEntry(word, out) end, { word })
+  if not (lookup and lookup:start()) then lookup = nil; showEntry(word, "") end
 end
 
 local function translateSelection()

@@ -40,12 +40,12 @@ local function t(k) return (STR[require("zonas").lang()] or STR.en)[k] end
 -- The pet's settings live with the zones (zonas.json), edited in the ▦ editor's Pet tab.
 local function settings() return require("zonas").pet() end
 
-local windows = {} -- session → id of the window you last typed into
+local windows = {} -- session → { app, id } of the window you last typed into
 local status = {} -- session → { state, at }
 local pet -- the pet on screen: { canvas, web, items, index, size, ... } or nil
 local drag -- the pet being dragged: { from, at, moved }
 local sheet, petName, loadedId = nil, nil, nil
-local watcher, focusFilter, mouseTap, tapGuard
+local watcher, mouseTap, tapGuard
 
 -- Pet sprites ----------------------------------------------------------------------------
 
@@ -96,6 +96,8 @@ end
 local function cell(row, col) return { row = row, col = col } end
 
 local function draw(c)
+  if pet.cell and pet.cell.row == c.row and pet.cell.col == c.col then return end
+  pet.cell = c
   local w, h = pet.size.w, pet.size.h
   pet.canvas[1].frame = { x = -c.col * w, y = -c.row * h, w = 8 * w, h = 11 * h }
 end
@@ -144,8 +146,8 @@ local function animate()
   if pet.running and not (pet.runTimer and pet.runTimer:running()) then pet.running = false end
   if not sheet or pet.running or drag then return end
   local now = hs.timer.secondsSinceEpoch()
-  local mouse = hs.mouse.absolutePosition()
-  if pet.mouse and math.abs(mouse.x - pet.mouse.x) + math.abs(mouse.y - pet.mouse.y) > 2 then pet.movedAt = now end
+  local mouse = pet.look and hs.mouse.absolutePosition()
+  if mouse and pet.mouse and math.abs(mouse.x - pet.mouse.x) + math.abs(mouse.y - pet.mouse.y) > 2 then pet.movedAt = now end
   pet.mouse = mouse
   if pet.look and not pet.once and pet.movedAt and now - pet.movedAt < 1.2 then
     local f = pet.canvas:frame()
@@ -188,8 +190,12 @@ local function counts()
   return working, waiting
 end
 
+local shownCounts
 local function refreshCounts()
   local working, waiting = counts()
+  local key = working .. "/" .. waiting
+  if key == shownCounts then return end
+  shownCounts = key
   require("zonas").badge((working > 0 and ("  ⚙" .. working) or "") .. (waiting > 0 and ("  ✋" .. waiting) or ""))
   if pet and pet.web then pet.web:evaluateJavaScript(string.format("counts(%d, %d)", working, waiting)) end
 end
@@ -319,9 +325,13 @@ end
 
 -- Placing and moving -----------------------------------------------------------------------
 
+-- Through the window's own app: hs.window.get(id) asks every app on the Mac for its windows, and
+-- one app that does not answer stops Hammerspoon.
 local function windowOf(session)
-  local id = windows[session]
-  return id and hs.window.get(id)
+  local entry = windows[session]
+  local w = entry and entry.app:getWindow(entry.id)
+  if entry and not w then windows[session] = nil end
+  return w
 end
 
 local function goTo(session)
@@ -340,14 +350,22 @@ local function spotFor(req)
 end
 
 -- The bubble stands to the pet's left, bottoms lined up.
-local function placeBubble()
+local function placeBubble(moveOnly)
   if not pet.web then return end
   local f = pet.canvas:frame()
-  pet.web:frame({ x = f.x - GAP - BW - 12, y = f.y + f.h - pet.webH, w = BW + 12, h = pet.webH })
+  local at = { x = f.x - GAP - BW - 12, y = f.y + f.h - pet.webH }
+  if moveOnly then pet.web:topLeft(at) else pet.web:frame({ x = at.x, y = at.y, w = BW + 12, h = pet.webH }) end
+end
+
+-- A new walk or a drag ends the run in progress, which would otherwise keep moving the pet.
+local function stopRun()
+  if pet.runTimer then pet.runTimer:stop() end
+  pet.running = false
 end
 
 -- The pet trots from where it is to `dest`, slowing down as it arrives; the bubble waits for it.
 local function runTo(dest, from, arrive)
+  stopRun()
   from = from or pet.canvas:topLeft()
   if math.abs(dest.x - from.x) + math.abs(dest.y - from.y) < 4 or not sheet or not pet.run then
     pet.canvas:topLeft(dest)
@@ -375,6 +393,9 @@ end
 
 local function remove()
   if not pet then return end
+  -- With no pet there is nothing to click or drag: the mouse listener rests.
+  mouseTap:stop()
+  drag = nil
   for _, timer in pairs({ pet.timer, pet.runTimer, pet.leaveTimer }) do timer:stop() end
   pet.canvas:delete()
   if pet.web then pet.web:delete() end
@@ -425,6 +446,25 @@ local function removeSession(session, reply)
   end
 end
 
+-- Going to a window yourself answers for the pet: the normal prompt is right there. A plain check
+-- twice a second, only while the pet is out: hs.window.filter watches every app's windows.
+local function checkFocus()
+  local w = hs.window.focusedWindow()
+  local id = w and w:id()
+  if not id or id == pet.lastFocus then return end
+  pet.lastFocus = id
+  for session, wid in pairs(windows) do
+    if wid.id == id then removeSession(session, "terminal") end
+  end
+end
+
+local function tick()
+  if not pet then return end
+  animate()
+  pet.ticks = pet.ticks + 1
+  if pet.ticks % 5 == 0 and not pet.leaving then checkFocus() end
+end
+
 local onMessage
 
 local function create(req)
@@ -447,7 +487,11 @@ local function create(req)
   else
     pet.canvas:appendElements(table.unpack(drawnPet(req.kind, pet.size)))
   end
-  pet.timer = hs.timer.doEvery(0.05, animate)
+  local focused = hs.window.focusedWindow()
+  pet.lastFocus, pet.ticks = focused and focused:id(), 0
+  -- 10 ticks a second: the slowest frame lasts 0.24 s and the quickest 0.1 s.
+  pet.timer = hs.timer.doEvery(0.1, tick)
+  mouseTap:start()
   local uc = hs.webview.usercontent.new("mascota")
   uc:setCallback(function(m) if type(m.body) == "table" then onMessage(m.body) end end)
   pet.web = hs.webview.new({ x = dest.x - GAP - BW - 12, y = dest.y, w = BW + 12, h = pet.webH }, {}, uc)
@@ -536,6 +580,7 @@ local function onMouse(e)
   local types = hs.eventtap.event.types
   local kind, p = e:getType(), e:location()
   if kind == types.leftMouseDown and inside(p, pet.canvas:frame()) then
+    if pet.running then stopRun(); if pet.web then placeBubble(); pet.web:show() end end
     drag = { from = p, at = pet.canvas:topLeft(), moved = false }
     return true
   end
@@ -543,7 +588,7 @@ local function onMouse(e)
     local dx, dy = p.x - drag.from.x, p.y - drag.from.y
     drag.moved = drag.moved or math.abs(dx) + math.abs(dy) > 3
     pet.canvas:topLeft({ x = drag.at.x + dx, y = drag.at.y + dy })
-    placeBubble()
+    placeBubble(true)
     return true
   end
   if drag and kind == types.leftMouseUp then
@@ -601,7 +646,7 @@ local function handle(req)
   if req.kind == "bind" then
     local w = hs.window.focusedWindow()
     local app = w and w:application()
-    if app and TERMINALS[app:bundleID()] then windows[req.session] = w:id() end
+    if app and TERMINALS[app:bundleID()] then windows[req.session] = { app = app, id = w:id() } end
     return removeSession(req.session, "terminal")
   end
   local p = settings()
@@ -650,20 +695,10 @@ function M.start()
   end
   watcher = hs.pathwatcher.new(INBOX, poll):start()
   local types = hs.eventtap.event.types
-  mouseTap = hs.eventtap.new({ types.leftMouseDown, types.leftMouseDragged, types.leftMouseUp }, onMouse):start()
+  -- Every click on the Mac passes through this listener, so it runs only while the pet is out.
+  mouseTap = hs.eventtap.new({ types.leftMouseDown, types.leftMouseDragged, types.leftMouseUp }, onMouse)
   -- macOS turns off a mouse listener that answered too slowly once; turn it back on.
-  tapGuard = hs.timer.doEvery(3, function() if not mouseTap:isEnabled() then drag = nil; mouseTap:start() end end)
-  focusFilter = hs.window.filter.new(function(w)
-    local app = w:application()
-    return app ~= nil and TERMINALS[app:bundleID()] == true
-  end)
-  -- Going to a window yourself answers for the pet: the normal prompt is right there.
-  focusFilter:subscribe(hs.window.filter.windowFocused, function(w)
-    if not pet then return end
-    for session, id in pairs(windows) do
-      if id == w:id() then removeSession(session, "terminal") end
-    end
-  end)
+  tapGuard = hs.timer.doEvery(3, function() if pet and not mouseTap:isEnabled() then drag = nil; mouseTap:start() end end)
 end
 
 return M
