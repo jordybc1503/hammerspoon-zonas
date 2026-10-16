@@ -482,5 +482,7 @@ saved = load()
 M.openEditor = openEditor
 M.lang = lang
 M.pet = function() return saved.pet end
+-- The pet's counts next to the ▦ icon: sessions working and waiting for you.
+M.badge = function(text) if menu then menu:setTitle("▦" .. (text or "")) end end
 M.save = save
 return M
