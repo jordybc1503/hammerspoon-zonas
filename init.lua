@@ -118,6 +118,7 @@ local function translateSelection()
 end
 
 zonas.start({ translate = translateSelection })
+require("mascota").start()
 
 hs.autoLaunch(true)
 hs.alert.show(zonas.t("ready"), 2)

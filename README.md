@@ -18,6 +18,27 @@ each screen.
 - **Translator:** select a word in any app and press `⌘⌥T`. It uses the Oxford Spanish-English
   dictionary that comes with macOS, with no network.
 
+## Claude Code pet
+
+A pet runs to the terminal window whose Claude Code session **finished**, **has a question** or
+**needs your permission**. It uses your [Codex](https://openai.com/codex) pet from `~/.codex/pets`
+(it runs in, waves, jumps, droops and looks at your mouse), or a drawn creature if you have none.
+
+- It only shows up when you are not already in that session's window.
+- Click it to go to the window. In default permission mode, **Approve** and **Deny** answer the
+  prompt from the pop-up; in auto mode it only points you to a real prompt.
+- Turn it on or off, pick the pet, the events, its size and how it moves in the editor's
+  **Pet** tab, or from the ▦ menu.
+
+It has two halves: `mascota.lua` here draws the pet, and a Claude Code plugin tells it what
+happens. Install the plugin once, at the prompt of a Claude Code session:
+
+```
+/plugin install mascota --marketplace jordybc1503/hammerspoon-zonas
+```
+
+Answer `y` to add the marketplace, then pick a scope (*user* makes it work in every project).
+
 ## Default shortcuts
 
 On a Windows keyboard, `⌘` is the Windows key and `⌥` is Alt.
@@ -52,6 +73,9 @@ the editor.
 | `zonas.html` | The editor, opened from the ▦ menu |
 | `zonas.json` | What you save in the editor. Without it, the defaults apply |
 | `bin/dict.swift` | The program that reads the macOS dictionary |
+| `mascota.lua` | The Claude Code pet: draws it, moves it, answers approvals |
+| `claude-plugin/mascota/` | The Claude Code plugin that tells the pet what happens |
+| `.claude-plugin/marketplace.json` | Makes this repo a Claude Code marketplace for that plugin |
 
 ## License
 

@@ -2,7 +2,33 @@
   "lang": "auto",
   "gap": 0,
   "active": "centro34-lectura",
-  "keys": { "mods": ["ctrl", "alt"], "full": "return", "drag": "shift", "merge": "ctrl",
-            "translate": { "mods": ["cmd", "alt"], "key": "t" } },
-  "layouts": []
+  "keys": {
+    "mods": [
+      "ctrl",
+      "alt"
+    ],
+    "full": "return",
+    "drag": "shift",
+    "merge": "ctrl",
+    "translate": {
+      "mods": [
+        "cmd",
+        "alt"
+      ],
+      "key": "t"
+    }
+  },
+  "layouts": [],
+  "pet": {
+    "enabled": true,
+    "id": "",
+    "size": "m",
+    "look": true,
+    "run": true,
+    "events": {
+      "done": true,
+      "question": true,
+      "needs": true
+    }
+  }
 }

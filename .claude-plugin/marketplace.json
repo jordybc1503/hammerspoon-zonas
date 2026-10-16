@@ -1,0 +1,14 @@
+{
+  "name": "hammerspoon-zonas",
+  "description": "Claude Code plugins for the hammerspoon-zonas macOS setup.",
+  "owner": {
+    "name": "jordybc1503"
+  },
+  "plugins": [
+    {
+      "name": "mascota",
+      "source": "./claude-plugin/mascota",
+      "description": "Your Codex pet runs to the terminal window whose Claude Code session finished or needs you. Needs this repo's Hammerspoon config."
+    }
+  ]
+}

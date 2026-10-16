@@ -124,6 +124,15 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 select { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; }
 input[type="range"] { width: 240px; accent-color: var(--accent); }
 .mini { max-width: 420px; }
+.petgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; width: 100%; }
+.petcard {
+  font: inherit; font-size: 13px; color: var(--fg); background: var(--bg); cursor: pointer;
+  border: 2px solid var(--line); border-radius: 10px; padding: 8px; display: grid; justify-items: center; gap: 4px;
+}
+.petcard:hover { border-color: var(--accent); }
+.petcard.on { border-color: var(--accent); background: var(--soft); }
+.petcard img { width: 56px; height: 61px; object-fit: contain; }
+.petblank { width: 56px; height: 61px; display: grid; place-items: center; font-size: 34px; color: #D97757; }
 </style>
 </head>
 <body>
@@ -131,6 +140,7 @@ input[type="range"] { width: 240px; accent-color: var(--accent); }
   <button class="tab" data-tab="zones" id="tab-zones"></button>
   <button class="tab" data-tab="keys" id="tab-keys"></button>
   <button class="tab" data-tab="general" id="tab-general"></button>
+  <button class="tab" data-tab="pet" id="tab-pet"></button>
   <span class="spacer"></span>
   <span id="msg" class="msg"></span>
   <button id="save" class="btn primary"></button>
@@ -165,6 +175,15 @@ const STR = {
     errTranslate: "El atajo del traductor ({0}) ya lo usa una zona.", errName: "Ponle un nombre al diseño.",
     errKey: "Esa tecla no se puede usar. Prueba una letra, un número, una flecha, Enter, Espacio o F1–F12.",
     errNeedMod: "Añade al menos una de ⌃ ⌥ ⇧ ⌘.",
+    pet: "Mascota", petOn: "Mostrar la mascota",
+    petOnHelp: "Va a la ventana de la terminal cuando una sesión de Claude Code termina o te necesita.",
+    petWhich: "Qué mascota", petWhichHelp: "Tus mascotas de Codex (~/.codex/pets). Si creas otra en Codex, aparece aquí.",
+    petAuto: "La primera", petDrawn: "Dibujada", petWhen: "Cuándo aparece",
+    petWhenHelp: "Nunca aparece si ya estás en la ventana de esa sesión.",
+    evDone: "Cuando una sesión termina", evQuestion: "Cuando Claude te hace una pregunta", evNeeds: "Cuando necesita tu permiso",
+    petMove: "Cómo se mueve", petMoveHelp: "El tamaño, y si llega corriendo y mira hacia tu ratón.",
+    petLook: "Mira hacia el ratón", petRun: "Llega corriendo", size_s: "Pequeña", size_m: "Mediana", size_l: "Grande",
+    petTry: "Guardar y probar",
     addFloat: "Añadir zona flotante", floatN: "Zona flotante", width: "Ancho %", height: "Alto %", center: "Centrar",
     floatHint: "Queda encima de las demás zonas. Arrástrala en el dibujo para moverla.",
   },
@@ -193,6 +212,15 @@ const STR = {
     errTranslate: "The translator shortcut ({0}) is already used by a zone.", errName: "Give the layout a name.",
     errKey: "That key cannot be used. Try a letter, a number, an arrow, Enter, Space or F1–F12.",
     errNeedMod: "Add at least one of ⌃ ⌥ ⇧ ⌘.",
+    pet: "Pet", petOn: "Show the pet",
+    petOnHelp: "It goes to the terminal window when a Claude Code session finishes or needs you.",
+    petWhich: "Which pet", petWhichHelp: "Your Codex pets (~/.codex/pets). Make another one in Codex and it shows up here.",
+    petAuto: "The first one", petDrawn: "Drawn", petWhen: "When it shows up",
+    petWhenHelp: "It never shows up if you are already in that session's window.",
+    evDone: "When a session finishes", evQuestion: "When Claude asks you a question", evNeeds: "When it needs your permission",
+    petMove: "How it moves", petMoveHelp: "Its size, and whether it runs in and looks at your mouse.",
+    petLook: "Looks at the mouse", petRun: "Runs in", size_s: "Small", size_m: "Medium", size_l: "Large",
+    petTry: "Save and try",
     addFloat: "Add floating zone", floatN: "Floating zone", width: "Width %", height: "Height %", center: "Center",
     floatHint: "It sits on top of the other zones. Drag it in the drawing to move it.",
   },
@@ -208,6 +236,8 @@ const S = structuredClone(INIT.saved);
 if (!Array.isArray(S.layouts)) S.layouts = [];
 const templates = INIT.templates.map(t => ({ ...t, template: true }));
 if (!S.screens || Array.isArray(S.screens)) S.screens = {};
+S.pet = { ...structuredClone(INIT.defaults.pet), ...(S.pet || {}) };
+S.pet.events = { ...INIT.defaults.pet.events, ...(S.pet.events || {}) };
 // Same as layoutFor in zonas.lua: with no choice, an ultrawide uses S.active and others use Halves.
 const SCREENS = INIT.screens || [];
 const chosenFor = s => S.screens[s.name] ?? (s.wide ? S.active : "mitades");
@@ -368,8 +398,9 @@ function problem() {
 
 function save() {
   const err = problem();
-  if (err) return say(err, true);
+  if (err) { say(err, true); return false; }
   window.webkit.messageHandlers.zonas.postMessage({ type: "save", data: JSON.parse(JSON.stringify(S)) });
+  return true;
 }
 
 // Hammerspoon calls this once it has saved and applied the changes.
@@ -637,9 +668,45 @@ function generalView() {
       el("div", { className: "row" }, gap, out), mini));
 }
 
+function petView() {
+  const p = S.pet;
+  const check = (id, label, get, set) => {
+    const box = el("input", { type: "checkbox", id, checked: get() });
+    box.onchange = () => { set(box.checked); changed(); };
+    return el("label", { className: "mod" }, box, label);
+  };
+  const choice = (id, name, thumb) => {
+    const b = el("button", { className: "petcard" + (p.id === id ? " on" : ""), title: name });
+    b.append(thumb ? el("img", { src: thumb, alt: "" }) : el("span", { className: "petblank", textContent: "●" }),
+      el("span", { textContent: name }));
+    b.onclick = () => { p.id = id; changed(); };
+    return b;
+  };
+  const pets = INIT.pets || [];
+  const grid = el("div", { className: "petgrid" }, choice("", t("petAuto"), pets[0]?.thumb),
+    ...pets.map(x => choice(x.id, x.name, x.thumb)), choice("drawn", t("petDrawn")));
+  const size = el("select", { id: "pet-size" });
+  for (const v of ["s", "m", "l"]) size.append(el("option", { value: v, textContent: t("size_" + v), selected: p.size === v }));
+  size.onchange = () => { p.size = size.value; changed(); };
+  const tryIt = el("button", { className: "btn primary", textContent: t("petTry") });
+  tryIt.onclick = () => {
+    if (dirty && !save()) return;
+    window.webkit.messageHandlers.zonas.postMessage({ type: "demo", kind: "done" });
+  };
+  return el("div", { className: "page" },
+    card(t("petOn"), t("petOnHelp"), check("pet-on", t("petOn"), () => p.enabled, v => { p.enabled = v; })),
+    el("section", { className: "card" }, el("h3", { textContent: t("petWhich") }), el("p", { textContent: t("petWhichHelp") }), grid),
+    card(t("petWhen"), t("petWhenHelp"),
+      ...["done", "question", "needs"].map(k => check("ev-" + k, t("ev" + k[0].toUpperCase() + k.slice(1)), () => p.events[k], v => { p.events[k] = v; }))),
+    card(t("petMove"), t("petMoveHelp"), size,
+      check("pet-run", t("petRun"), () => p.run, v => { p.run = v; }),
+      check("pet-look", t("petLook"), () => p.look, v => { p.look = v; })),
+    el("div", { className: "actions" }, tryIt));
+}
+
 function render() {
   document.documentElement.lang = lang();
-  for (const name of ["zones", "keys", "general"]) {
+  for (const name of ["zones", "keys", "general", "pet"]) {
     const b = $("tab-" + name);
     b.textContent = t(name);
     b.className = "tab" + (tab === name ? " on" : "");
@@ -650,7 +717,7 @@ function render() {
   $("save").onclick = save;
   const view = $("view");
   const scroll = view.scrollTop;
-  view.replaceChildren(tab === "zones" ? zonesView() : tab === "keys" ? keysView() : generalView());
+  view.replaceChildren(tab === "zones" ? zonesView() : tab === "keys" ? keysView() : tab === "pet" ? petView() : generalView());
   view.scrollTop = scroll;
 }
 

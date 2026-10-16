@@ -33,6 +33,9 @@ local DEFAULTS = {
   lang = "auto", gap = 0, active = "centro34", layouts = {}, screens = {},
   keys = { mods = { "ctrl", "alt" }, full = "return", drag = "shift", merge = "ctrl",
     translate = { mods = { "cmd", "alt" }, key = "t" } },
+  -- The Claude Code pet (mascota.lua). id "" is the first Codex pet found, "drawn" the stand-in.
+  pet = { enabled = true, id = "", size = "m", look = true, run = true,
+    events = { done = true, question = true, needs = true } },
 }
 
 local STR = {
@@ -45,7 +48,7 @@ local STR = {
     prefs = "Preferencias de Hammerspoon", title = "Zonas y atajos",
     ready = "Atajos listos · menú ▦ arriba", notInDict = "No está en el diccionario.",
     noSel = "Sin selección", noSelBody = "Selecciona una palabra y vuelve a pulsar %s.",
-    floating = "Zona flotante",
+    floating = "Zona flotante", pet = "%s: avisos de Claude Code", petDefault = "Mascota",
   },
   en = {
     layout = "%s · %s", zone = "Zone %d", full = "Full screen",
@@ -56,7 +59,7 @@ local STR = {
     prefs = "Hammerspoon preferences", title = "Zones and shortcuts",
     ready = "Shortcuts ready · ▦ menu at the top", notInDict = "Not in the dictionary.",
     noSel = "Nothing selected", noSelBody = "Select a word and press %s again.",
-    floating = "Floating zone",
+    floating = "Floating zone", pet = "%s: Claude Code alerts", petDefault = "Pet",
   },
 }
 
@@ -144,6 +147,12 @@ local function valid(d)
       if type(name) ~= "string" or type(id) ~= "string" then return false end
     end
   end
+  local p = d.pet
+  if type(p) ~= "table" or type(p.id) ~= "string" or not ({ s = true, m = true, l = true })[p.size]
+    or type(p.events) ~= "table" then return false end
+  for _, v in ipairs({ p.enabled, p.look, p.run, p.events.done, p.events.question, p.events.needs }) do
+    if type(v) ~= "boolean" then return false end
+  end
   for _, l in ipairs(d.layouts or {}) do
     if type(l.id) ~= "string" or type(l.name) ~= "string" or not validNode(l.root, 1)
       or not validFloats(l.floats) then return false end
@@ -157,9 +166,16 @@ local function load()
   for k, v in pairs(DEFAULTS) do
     if d[k] == nil then d[k] = clone({ v })[1] end
   end
-  if type(d.keys) == "table" then
-    for k, v in pairs(DEFAULTS.keys) do
-      if d.keys[k] == nil then d.keys[k] = clone({ v })[1] end
+  for _, part in ipairs({ "keys", "pet" }) do
+    if type(d[part]) == "table" then
+      for k, v in pairs(DEFAULTS[part]) do
+        if d[part][k] == nil then d[part][k] = clone({ v })[1] end
+      end
+    end
+  end
+  if type(d.pet) == "table" and type(d.pet.events) == "table" then
+    for k, v in pairs(DEFAULTS.pet.events) do
+      if d.pet.events[k] == nil then d.pet.events[k] = v end
     end
   end
   return valid(d) and d or clone(DEFAULTS)
@@ -370,6 +386,7 @@ local function openEditor()
   uc:setCallback(function(msg)
     local b = msg.body
     if b.type == "record" then return pause(b.on) end
+    if b.type == "demo" then return require("mascota").demo(b.kind) end
     if b.type == "save" then
       if not valid(b.data) then return editor:evaluateJavaScript("saved(false)") end
       saved = b.data
@@ -389,7 +406,8 @@ local function openEditor()
     if not seen[name] then screens[#screens + 1] = { name = name } end
   end
   local init = hs.json.encode({ templates = TEMPLATES, saved = saved, defaults = DEFAULTS,
-    screen = { w = s.w, h = s.h }, screens = screens, sysLang = systemLang() })
+    screen = { w = s.w, h = s.h }, screens = screens, sysLang = systemLang(),
+    pets = require("mascota").pets() })
   local file = io.open(DIR .. "zonas.html")
   local html = file:read("a")
   file:close()
@@ -438,6 +456,8 @@ local function menuItems()
     { title = M.t("edit"), fn = openEditor },
     { title = "-" },
     { title = M.translateCombo() .. "     " .. M.t("translate"), disabled = true },
+    { title = M.t("pet", require("mascota").name() or M.t("petDefault")), checked = require("mascota").enabled(),
+      fn = function() require("mascota").toggle() end },
     { title = "-" },
     { title = M.t("guide"), fn = function() hs.urlevent.openURL("https://github.com/jordybc1503/hammerspoon-zonas#readme") end },
     { title = M.t("reload"), fn = hs.reload },
@@ -460,4 +480,7 @@ end
 
 saved = load()
 M.openEditor = openEditor
+M.lang = lang
+M.pet = function() return saved.pet end
+M.save = save
 return M
