@@ -330,12 +330,42 @@ end
 local function windowOf(session)
   local entry = windows[session]
   local w = entry and entry.app:getWindow(entry.id)
-  if entry and not w then windows[session] = nil end
+  if entry and not w and not entry.term then windows[session] = nil end
   return w
 end
 
-local function goTo(session)
-  local w = windowOf(session)
+-- Background sessions (`claude agents`) all share the agent view's window: only a title that
+-- carries the session's short id is that session.
+local function shows(session, w)
+  local entry = windows[session]
+  if not (entry and w and w:id() == entry.id) then return false end
+  return not entry.bg or (w:title() or ""):find(entry.bg, 1, true) ~= nil
+end
+
+-- Through osascript in a task: hs.osascript waits on Ghostty on the main thread.
+local function ghostty(script, done)
+  hs.task.new("/usr/bin/osascript", done and function(code, out) if code == 0 then done(out) end end,
+    { "-e", 'tell application "Ghostty"\n' .. script .. "\nend tell" }):start()
+end
+
+local function goTo(req)
+  local entry = windows[req.session]
+  if req.bg then
+    return ghostty(([[
+repeat with term in terminals
+  if name of term contains "%s" then
+    focus term
+    activate
+    return
+  end if
+end repeat
+set cfg to new surface configuration
+set initial input of cfg to "claude attach %s" & return
+new window with configuration cfg
+activate]]):format(req.bg, req.bg))
+  end
+  if entry and entry.term then return ghostty(('focus terminal id "%s"\nactivate'):format(entry.term)) end
+  local w = windowOf(req.session)
   if w then w:focus() else hs.application.launchOrFocusByBundleID("com.mitchellh.ghostty") end
 end
 
@@ -457,8 +487,8 @@ local function checkFocus()
   local id = w and w:id()
   if not id or id == pet.lastFocus then return end
   pet.lastFocus = id
-  for session, wid in pairs(windows) do
-    if wid.id == id then removeSession(session, "terminal") end
+  for session in pairs(windows) do
+    if shows(session, w) then removeSession(session, "terminal") end
   end
 end
 
@@ -588,7 +618,7 @@ onMessage = function(m)
     removeAt(pet.index, "terminal")
   else
     removeAt(pet.index, "terminal")
-    goTo(req.session)
+    goTo(req)
   end
 end
 
@@ -680,15 +710,23 @@ local function handle(req)
   if req.kind == "bind" then
     local w = hs.window.focusedWindow()
     local app = w and w:application()
-    if app and TERMINALS[app:bundleID()] then windows[req.session] = { app = app, id = w:id() } end
+    if app and TERMINALS[app:bundleID()] then
+      local entry = { app = app, id = w:id(), bg = req.bg }
+      windows[req.session] = entry
+      -- Ghostty's tabs and splits: remember the very terminal you typed in.
+      if app:bundleID() == "com.mitchellh.ghostty" and not req.bg then
+        ghostty("return id of focused terminal of selected tab of front window", function(out)
+          entry.term = out:match("^%s*([%w%-]+)")
+        end)
+      end
+    end
     return removeSession(req.session, "terminal")
   end
   local p = settings()
   local wanted = p.enabled and p.events[EVENT[req.kind]]
   -- Switched off, not wanted for this event, or you are already in that window: no pet. The
   -- settings come first: asking windows can wait on a slow app.
-  local w, focused = wanted and windowOf(req.session), wanted and hs.window.focusedWindow()
-  if not wanted or (w and focused and w:id() == focused:id()) then
+  if not wanted or shows(req.session, hs.window.focusedWindow()) then
     if req.wait then answer(req, "terminal") end
     return
   end
@@ -706,7 +744,8 @@ local function poll()
     os.remove(path)
     -- Ids and sessions name files: anything but letters, digits and dashes is not ours.
     if type(req) == "table" and type(req.session) == "string" and req.session:match("^[%w%-]+$")
-      and type(req.id) == "string" and req.id:match("^[%w%-]+$") then handle(req) end
+      and type(req.id) == "string" and req.id:match("^[%w%-]+$")
+      and (req.bg == nil or (type(req.bg) == "string" and req.bg:match("^%w+$"))) then handle(req) end
   end
 end
 

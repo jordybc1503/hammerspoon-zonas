@@ -19,6 +19,8 @@ i=0; while [ ! -f "$f.answer" ] && [ $i -lt 1160 ]; do sleep 0.5; i=$((i+1)); do
 const session = crypto.randomUUID();
 let count = 0;
 let label: string | undefined; // the project folder, for the bubble
+// A background session's short id (`claude attach <id>`), or null: Hammerspoon opens it by this.
+let bg: string | null | undefined;
 const ASKING_MODES = new Set(["default", "acceptEdits", "plan"]);
 let mode: string | undefined;
 let lastAsk: { tool: string; detail: string } | undefined;
@@ -26,7 +28,11 @@ let lastAsk: { tool: string; detail: string } | undefined;
 async function send($: EngineInterface, kind: string, fields: object, wait = false): Promise<string> {
   const id = `${session}-${++count}`;
   label ??= (await $.session.cwd()).split("/").pop() ?? "";
-  const request = JSON.stringify({ kind, session, id, label, wait, ...fields });
+  if (bg === undefined) {
+    const job = (await $.env.get("CLAUDE_CODE_SESSION_KIND")) === "bg" && (await $.env.get("CLAUDE_JOB_DIR"));
+    bg = job ? (job.split("/").pop() ?? null) : null;
+  }
+  const request = JSON.stringify({ kind, session, id, label, wait, ...(bg ? { bg } : {}), ...fields });
   const run = await $.process.run(["/bin/sh", "-c", SCRIPT, "mascota", id, request, wait ? "1" : "0"], {
     timeoutMs: 600_000,
   });
