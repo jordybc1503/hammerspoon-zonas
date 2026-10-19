@@ -290,7 +290,7 @@ local function esc(s)
   return (tostring(s or ""):gsub("[&<>\"]", { ["&"] = "&amp;", ["<"] = "&lt;", [">"] = "&gt;", ['"'] = "&quot;" }))
 end
 
--- The session's status line, as Claude Code draws it: [model] | 🌿 branch | 📁 folder, then the
+-- The session's status line, as Claude Code draws it: [model] | 🌿 branch | 🔗 repo, then the
 -- context bar, cost and time. Older plugins send no status: just the folder then.
 local function statusHTML(req)
   local st = type(req.status) == "table" and req.status
@@ -298,7 +298,7 @@ local function statusHTML(req)
   local pct = math.max(0, math.min(100, math.floor(tonumber(st.pct) or 0)))
   local color = pct >= 90 and "r" or pct >= 70 and "y" or "g"
   local first = '<span class="c">[' .. esc(st.model) .. "]</span>"
-    .. (st.branch and (" | 🌿 " .. esc(st.branch)) or "") .. " | 📁 " .. esc(req.label)
+    .. (st.branch and (" | 🌿 " .. esc(st.branch)) or "") .. " | 🔗 " .. esc(st.repo or req.label)
   local second = string.format('<span class="%s">%s%s</span> %d%%', color,
     string.rep("█", pct // 10), string.rep("░", 10 - pct // 10), pct)
     .. (tonumber(st.usd) and string.format(' | <span class="y">$%.2f</span>', st.usd) or "")
@@ -828,7 +828,7 @@ function M.demo(kind)
   kind = kind or "done"
   add({ kind = kind, session = "demo-" .. kind, id = "demo-" .. kind, label = "demo", tool = "Bash",
     detail = "git push origin feature/mascota", text = "This is how a finished session looks.", seconds = 42,
-    status = { model = "Opus 5.5", branch = "main", pct = 34, usd = 1.27, minutes = 18 },
+    status = { model = "Opus 5.5", branch = "main", repo = "hammerspoon-zonas", pct = 34, usd = 1.27, minutes = 18 },
     questions = { { question = "Which layout should the laptop use?", multiSelect = false, options = {
       { label = "Halves", description = "Two columns" }, { label = "Thirds", description = "Three columns" } } } } })
 end

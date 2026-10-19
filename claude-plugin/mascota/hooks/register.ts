@@ -28,14 +28,17 @@ let lastAsk: { tool: string; detail: string } | undefined;
 // What the status line shows, for the bubble: model, branch, context, cost and time.
 async function statusLine($: EngineInterface): Promise<object> {
   const cwd = await $.session.cwd();
-  const [model, usage, git] = await Promise.all([
+  const [model, usage, git, repo] = await Promise.all([
     $.session.model(),
     $.session.usage(),
     $.process.run(["git", "-C", cwd, "branch", "--show-current"]).catch(() => undefined),
+    $.session.repo().catch(() => null),
   ]);
   return {
     model,
     branch: git?.stdout.trim() || undefined,
+    // Named like the status line: the origin remote's repository, else the repository's folder.
+    repo: (repo?.remote ?? repo?.root ?? cwd).replace(/\/+$/, "").split(/[/:]/).pop()?.replace(/\.git$/, ""),
     pct: Math.round(usage.context.percent ?? 0),
     usd: usage.cost?.usd,
     minutes: Math.floor((Date.now() - usage.startedAt) / 60000),
