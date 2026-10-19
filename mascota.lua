@@ -880,12 +880,16 @@ local function onMouse(e)
       pet.back = hs.window.focusedWindow()
       win:focus()
     end
+    -- The terminal takes its keyboard only from a real click of its own (the page cannot click
+    -- into it): once the bubble is active, the same click again, which now passes through.
     pet.web:evaluateJavaScript(string.format([[(() => {
       const el = document.elementFromPoint(%d, %d);
       const target = el && el.closest("button, input");
       if (target && target.tagName === "INPUT") target.focus(); else if (target) target.click();
-      else if (el && el.tagName === "IFRAME") el.focus();
-    })()]], x, y))
+      return el && el.tagName === "IFRAME";
+    })()]], x, y), function(inTerminal)
+      if inTerminal == true then hs.timer.doAfter(0.05, function() if pet and pet.web then hs.eventtap.leftClick(p) end end) end
+    end)
   end)
   return true
 end
