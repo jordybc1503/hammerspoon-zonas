@@ -61,6 +61,20 @@ async function send($: EngineInterface, kind: string, fields: object, wait = fal
   return run.stdout.trim();
 }
 
+// A turn's end and its Stop hook come in either order, and only Stop knows whether background
+// work (a shell, a subagent, a workflow) will wake the session again: "done" waits for both, and
+// a session with work in flight is still working.
+let ended: { text: string; seconds: number } | undefined;
+let busy: boolean | undefined;
+
+function settle($: EngineInterface): void {
+  if (!ended || busy === undefined) return;
+  const { text, seconds } = ended;
+  const working = busy;
+  ended = busy = undefined;
+  send($, working ? "working" : "done", working ? {} : { text, seconds, mode }).catch(() => {});
+}
+
 let home: string | undefined;
 
 async function pollReply($: EngineInterface): Promise<void> {
@@ -91,16 +105,32 @@ export const register: Register = (on) => {
   });
 
   on("turn.start", ($, e, next) => {
-    if (e.agentId === undefined) send($, "working", {}).catch(() => {});
+    if (e.agentId === undefined) {
+      ended = busy = undefined;
+      send($, "working", {}).catch(() => {});
+    }
     return next(e);
   });
 
   on("turn.complete", async ($, e, next) => {
     const result = await next(e);
     if (e.agentId === undefined && e.reason === "answer") {
-      send($, "done", { text: excerpt(e.answer), seconds: Math.round(e.durationMs / 1000), mode }).catch(() => {});
+      const mine = (ended = { text: excerpt(e.answer), seconds: Math.round(e.durationMs / 1000) });
+      settle($);
+      // Without a Stop hook to say otherwise, the turn's end alone means done.
+      $.clock.sleep(3000).then(() => {
+        if (ended !== mine) return;
+        busy ??= false;
+        settle($);
+      }).catch(() => {});
     }
     return result;
+  });
+
+  on("classic.Stop", ($, e, next) => {
+    busy = (e.background_tasks?.length ?? 0) > 0;
+    settle($);
+    return next(e);
   });
 
   // The bubble shows the question and its options; an answer from it fills the tool's `answers`,
