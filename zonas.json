@@ -1,8 +1,8 @@
 {
   "active" : "centro34-lectura",
   "keys" : {
-    "drag" : "shift",
     "full" : "return",
+    "drag" : "shift",
     "translate" : {
       "key" : "t",
       "mods" : [
@@ -19,10 +19,10 @@
   "lang" : "auto",
   "layouts" : [
     {
+      "id" : "d1792402442692",
       "floats" : [
 
       ],
-      "id" : "d1792402442692",
       "root" : {
         "sizes" : [
           0.33333333333333331,
@@ -32,11 +32,11 @@
         "dir" : "h",
         "children" : [
           {
-            "sizes" : [
-              0.51500000000000001,
-              0.48499999999999999
-            ],
             "dir" : "v",
+            "sizes" : [
+              0.45000000000000001,
+              0.55000000000000004
+            ],
             "children" : [
               {
                 "key" : "1"
