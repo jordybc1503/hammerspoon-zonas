@@ -39,10 +39,12 @@ local RUN = 340 -- pixels per second
 local STR = {
   es = { done = "¡Listo!", question = "Tengo una pregunta", needs = "Te necesito en la terminal", ask = "¿Puedo usar %s?",
     allow = "Aprobar", deny = "Rechazar", go = "Ir a la terminal →", reply = "Responde a Claude…", send = "Enviar",
-    other = "Otra respuesta…", working = "trabajando", waiting = "te esperan", close = "Cerrar" },
+    other = "Otra respuesta…", working = "trabajando", waiting = "te esperan", idle = "terminadas", close = "Cerrar",
+    minimize = "Minimizar (clic en la mascota para abrir)" },
   en = { done = "Done!", question = "I have a question", needs = "I need you in the terminal", ask = "May I use %s?",
     allow = "Approve", deny = "Deny", go = "Go to terminal →", reply = "Reply to Claude…", send = "Send",
-    other = "Another answer…", working = "working", waiting = "waiting for you", close = "Close" },
+    other = "Another answer…", working = "working", waiting = "waiting for you", idle = "done", close = "Close",
+    minimize = "Minimize (click the pet to open)" },
 }
 local function t(k) return (STR[require("zonas").lang()] or STR.en)[k] end
 -- The pet's settings live with the zones (zonas.json), edited in the ▦ editor's Pet tab.
@@ -190,23 +192,30 @@ local function answer(req, value) write(INBOX .. "/" .. req.id .. ".answer", val
 
 -- A session silent for 3 hours is gone (closed without telling us).
 local function counts()
-  local working, waiting, now = 0, 0, os.time()
+  local working, waiting, idle, now = 0, 0, 0, os.time()
   for session, st in pairs(status) do
     if now - st.at > 3 * 3600 then status[session], windows[session] = nil, nil
     elseif st.state == "working" then working = working + 1
-    elseif st.state == "waiting" then waiting = waiting + 1 end
+    elseif st.state == "waiting" then waiting = waiting + 1
+    elseif st.state == "idle" then idle = idle + 1 end
   end
-  return working, waiting
+  return working, waiting, idle
+end
+
+-- The bubble's call that draws the counts, and the words its page needs.
+local function countsJS() return string.format("counts(%d, %d, %d);", counts()) end
+local function words()
+  return hs.json.encode({ working = t("working"), waiting = t("waiting"), idle = t("idle"), close = t("close"), minimize = t("minimize") })
 end
 
 local shownCounts
 local function refreshCounts()
-  local working, waiting = counts()
-  local key = working .. "/" .. waiting
+  local working, waiting, idle = counts()
+  local key = working .. "/" .. waiting .. "/" .. idle
   if key == shownCounts then return end
   shownCounts = key
   require("zonas").badge((working > 0 and ("  ⚙" .. working) or "") .. (waiting > 0 and ("  ✋" .. waiting) or ""))
-  if pet and pet.web then pet.web:evaluateJavaScript(string.format("counts(%d, %d)", working, waiting)) end
+  if pet and pet.web then pet.web:evaluateJavaScript(countsJS()) end
 end
 
 local function setStatus(session, state)
@@ -226,10 +235,9 @@ html, body { margin: 0; background: transparent; overflow: hidden;
 .b::after { content: ""; position: absolute; right: -9px; bottom: 22px;
   border: 8px solid transparent; border-right: 0; border-left-color: #3a4150; }
 .top { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; min-height: 18px; }
-.counts { display: flex; gap: 12px; font-size: 11px; color: #9aa5b5; }
-.counts span { display: inline-flex; align-items: center; gap: 5px; }
-.counts i { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
-.counts .work i { background: #4f8cff; } .counts .wait i { background: #f0a24a; }
+.counts { display: flex; gap: 10px; font: 600 12px -apple-system, system-ui, sans-serif; }
+.counts span { display: inline-flex; align-items: center; gap: 3px; }
+.counts .work { color: #6f9dff; } .counts .wait { color: #f0a24a; } .counts .idle { color: #4fbf6f; }
 .nav { margin-left: auto; display: flex; align-items: center; gap: 2px; font-size: 11px; color: #9aa5b5; }
 .nav button { background: none; color: #c9d1dc; padding: 0 6px; font-size: 15px; line-height: 18px; }
 .nav button:hover { color: #fff; }
@@ -269,10 +277,11 @@ input:focus { border-color: #8fb0ff; }
 
 local JS = [[
 const post = m => window.webkit.messageHandlers.mascota.postMessage(m);
-function counts(working, waiting) {
+// Sessions working, waiting for you and done, as an icon and a number each; the word on hover.
+function counts(working, waiting, idle) {
+  const c = (n, cls, icon, word) => n ? `<span class="${cls}" title="${n} ${word}">${icon} ${n}</span>` : "";
   document.getElementById("counts").innerHTML =
-    (working ? `<span class="work"><i></i>${working} ${WORDS.working}</span>` : "")
-    + (waiting ? `<span class="wait"><i></i>${waiting} ${WORDS.waiting}</span>` : "");
+    c(working, "work", "⚙️", WORDS.working) + c(waiting, "wait", "✋", WORDS.waiting) + c(idle, "idle", "✓", WORDS.idle);
   size();
 }
 function size() { post({ action: "size", h: document.querySelector(".b").offsetHeight + 8 }); }
@@ -281,7 +290,7 @@ function bind(root) { for (const b of root.querySelectorAll("[data-a]")) b.oncli
 function pager(i, n) {
   const nav = document.getElementById("nav");
   nav.innerHTML = (n > 1 ? `<button data-a="prev">‹</button>${i}/${n}<button data-a="next">›</button>` : "")
-    + `<button data-a="close" title="${WORDS.close}">×</button>`;
+    + `<button data-a="min" title="${WORDS.minimize}">–</button><button data-a="close" title="${WORDS.close}">×</button>`;
   bind(nav);
 }
 bind(document);
@@ -349,9 +358,7 @@ local function bubbleHTML(req, index, total)
     controls = ""
   end
   local status = statusHTML(req)
-  local working, waiting = counts()
-  local data = string.format("const Q = %s; const WORDS = %s;",
-    q and hs.json.encode(q) or "null", hs.json.encode({ working = t("working"), waiting = t("waiting"), close = t("close") }))
+  local data = string.format("const Q = %s; const WORDS = %s;", q and hs.json.encode(q) or "null", words())
   return "<!doctype html><html><head><meta charset=\"utf-8\"><style>" .. CSS .. "</style></head>"
     .. (pet and pet.fixedH and '<body class="fixed">' or "<body>")
     .. '<div class="b"><div class="grip"></div><div class="top"><div class="counts" id="counts"></div><div class="nav" id="nav"></div></div>'
@@ -360,7 +367,7 @@ local function bubbleHTML(req, index, total)
     .. (detail and detail ~= "" and ('<div class="detail' .. (req.kind == "done" and " answer" or "") .. '">'
       .. esc(detail) .. "</div>") or "")
     .. controls .. '<div class="foot">' .. (status or "") .. go .. "</div></div><script>" .. data:gsub("</", "<\\/") .. JS
-    .. string.format("pager(%d, %d); counts(%d, %d);", index, total, working, waiting) .. "</script></body></html>"
+    .. string.format("pager(%d, %d); ", index, total) .. countsJS() .. "</script></body></html>"
 end
 
 -- The terminal ------------------------------------------------------------------------------
@@ -388,14 +395,12 @@ end
 -- The bubble around the terminal: counts, Go to terminal and the pager on top, the terminal
 -- below. The page waits for ttyd to listen before loading it.
 local function terminalHTML(url, index, total)
-  local working, waiting = counts()
-  local data = string.format("const Q = null; const WORDS = %s;",
-    hs.json.encode({ working = t("working"), waiting = t("waiting"), close = t("close") }))
+  local data = string.format("const Q = null; const WORDS = %s;", words())
   return "<!doctype html><html><head><meta charset=\"utf-8\"><style>" .. CSS .. "</style></head>"
     .. '<body class="fixed"><div class="b"><div class="grip"></div><div class="top"><div class="counts" id="counts"></div>'
     .. '<button class="link" data-a="go">' .. esc(t("go")) .. '</button><div class="nav" id="nav"></div></div>'
     .. '<div class="tty"><iframe id="tty"></iframe></div></div><script>' .. data:gsub("</", "<\\/") .. JS
-    .. string.format("pager(%d, %d); counts(%d, %d);", index, total, working, waiting)
+    .. string.format("pager(%d, %d); ", index, total) .. countsJS()
     .. string.format([[(function load(n) {
       fetch(%q, { mode: "no-cors" }).then(() => { document.getElementById("tty").src = %q; })
         .catch(() => { if (n < 40) setTimeout(() => load(n + 1), 150); });
@@ -553,6 +558,7 @@ local function render(walk)
   pet.home = MOOD[req.kind]
   if sheet then play(pet.home, true) else pet.canvas:replaceElements(table.unpack(drawnPet(req.kind, pet.size))) end
   pet.web:html(page(req, pet.index, #pet.items))
+  pet.minimized = false
   local function open()
     placeBubble()
     pet.web:show(0.12)
@@ -735,6 +741,10 @@ onMessage = function(m)
     placeBubble()
     -- The page has loaded: a message that came while it loaded missed the pager, so set it now.
     pet.web:evaluateJavaScript(string.format("pager(%d, %d)", pet.index, #pet.items))
+  elseif m.action == "min" then
+    -- Only the pet stays; a click on it brings the bubble back.
+    pet.minimized = true
+    pet.web:hide(0.12)
   elseif m.action == "prev" or m.action == "next" then
     pet.index = (pet.index - 1 + (m.action == "next" and 1 or -1)) % #pet.items + 1
     render(true)
@@ -763,7 +773,7 @@ end
 local function inside(p, f) return f and p.x >= f.x and p.x < f.x + f.w and p.y >= f.y and p.y < f.y + f.h end
 
 -- Dragging the pet moves it and its bubble, and it stays where you leave it; a click without
--- moving goes to the terminal. A click on the bubble is taken here too: the bubble is a window
+-- moving goes to the terminal, or brings a minimized bubble back. A click on the bubble is taken here too: the bubble is a window
 -- that is not active, and macOS spends the first click on activating it. So the bubble becomes
 -- active (for typing) and the button or box under the pointer is pressed or focused at once.
 local function onMouse(e)
@@ -771,7 +781,7 @@ local function onMouse(e)
   local types = hs.eventtap.event.types
   local kind, p = e:getType(), e:location()
   if kind == types.leftMouseDown and inside(p, pet.canvas:frame()) then
-    if pet.running then stopRun(); if pet.web then placeBubble(); pet.web:show() end end
+    if pet.running then stopRun(); if pet.web and not pet.minimized then placeBubble(); pet.web:show() end end
     drag = { from = p, at = pet.canvas:topLeft(), moved = false }
     return true
   end
@@ -790,7 +800,11 @@ local function onMouse(e)
     drag = nil
     if moved then
       pet.dragged = true
-      if pet.web then placeBubble(); pet.web:show() end
+      if pet.web and not pet.minimized then placeBubble(); pet.web:show() end
+    elseif pet.minimized and pet.web then
+      pet.minimized = false
+      placeBubble()
+      pet.web:show(0.12)
     else
       hs.timer.doAfter(0, function() onMessage({ action = "go" }) end)
     end
