@@ -11,6 +11,13 @@ local INBOX = os.getenv("HOME") .. "/Library/Caches/mascota"
 local REPLIES = INBOX .. "/replies"
 local TERMINALS = { ["com.mitchellh.ghostty"] = true, ["com.googlecode.iterm2"] = true, ["com.apple.Terminal"] = true }
 local BW = 340 -- bubble width until you resize it; the pet stands to its right
+-- A background session's bubble is its own terminal: ttyd serves `claude attach <id>` there.
+local TTYD = hs.fs.attributes("/opt/homebrew/bin/ttyd") and "/opt/homebrew/bin/ttyd"
+  or hs.fs.attributes("/usr/local/bin/ttyd") and "/usr/local/bin/ttyd"
+local CLAUDE
+for _, path in ipairs({ os.getenv("HOME") .. "/.local/bin/claude", "/opt/homebrew/bin/claude", "/usr/local/bin/claude" }) do
+  if not CLAUDE and hs.fs.attributes(path) then CLAUDE = path end
+end
 local BUBBLE = "mascota.bubble" -- { w, h } you gave the bubble by dragging its top-left corner
 local GAP = 10 -- between the bubble and the pet
 
@@ -238,6 +245,10 @@ h1 { font-size: 15px; margin: 0 0 2px; }
   border-top: 2px solid #8d98b0; border-left: 2px solid #8d98b0; border-top-left-radius: 4px; }
 body.fixed .b { height: calc(100vh - 6px); display: flex; flex-direction: column; }
 body.fixed .detail { flex: 1; max-height: none; overflow-y: auto; }
+/* The terminal's scrollbar track is white in this web view: it sits past the clipped edge. */
+.tty { flex: 1; min-height: 0; overflow: hidden; border-radius: 6px; background: #12161d; }
+.tty iframe { width: calc(100% + 15px); height: 100%; border: 0; }
+.top .link { padding: 0 4px; font-size: 12px; }
 .detail { font: 12px/1.35 Menlo, monospace; color: #dcdcdc; max-height: 4.1em; overflow: hidden;
   margin-bottom: 8px; word-break: break-word; }
 .answer { font: 13px/1.45 -apple-system, system-ui, sans-serif; max-height: 15em; overflow-y: auto;
@@ -352,6 +363,58 @@ local function bubbleHTML(req, index, total)
     .. string.format("pager(%d, %d); counts(%d, %d);", index, total, working, waiting) .. "</script></body></html>"
 end
 
+-- The terminal ------------------------------------------------------------------------------
+
+local function stopTerminal()
+  if pet and pet.tty then pet.tty.task:terminate(); pet.tty = nil end
+end
+
+-- The address of the session's terminal, started if need be; nil for a session in a terminal tab
+-- (its screen belongs to that tab) or without ttyd. ttyd listens on the loopback only, under a
+-- random path, and talks only to its own page (-O).
+local function terminalFor(req)
+  if not (TTYD and CLAUDE and req.bg) then return nil end
+  if pet.tty and pet.tty.bg == req.bg then return pet.tty.url end
+  stopTerminal()
+  local port, path = math.random(20000, 40000), hs.host.uuid():gsub("-", "")
+  local task = hs.task.new(TTYD, nil, { "-p", tostring(port), "-i", "lo0", "-O", "-W", "-b", "/" .. path,
+    "-t", "fontSize=12", "-t", "fontFamily=Menlo", "-t", "disableReconnect=true", "-t", "disableLeaveAlert=true",
+    "-t", 'theme={"background":"#12161d","scrollbarSliderBackground":"#3a4150"}', CLAUDE, "attach", req.bg })
+  if not task:start() then return nil end
+  pet.tty = { task = task, bg = req.bg, url = string.format("http://127.0.0.1:%d/%s/", port, path) }
+  return pet.tty.url
+end
+
+-- The bubble around the terminal: counts, Go to terminal and the pager on top, the terminal
+-- below. The page waits for ttyd to listen before loading it.
+local function terminalHTML(url, index, total)
+  local working, waiting = counts()
+  local data = string.format("const Q = null; const WORDS = %s;",
+    hs.json.encode({ working = t("working"), waiting = t("waiting"), close = t("close") }))
+  return "<!doctype html><html><head><meta charset=\"utf-8\"><style>" .. CSS .. "</style></head>"
+    .. '<body class="fixed"><div class="b"><div class="grip"></div><div class="top"><div class="counts" id="counts"></div>'
+    .. '<button class="link" data-a="go">' .. esc(t("go")) .. '</button><div class="nav" id="nav"></div></div>'
+    .. '<div class="tty"><iframe id="tty"></iframe></div></div><script>' .. data:gsub("</", "<\\/") .. JS
+    .. string.format("pager(%d, %d); counts(%d, %d);", index, total, working, waiting)
+    .. string.format([[(function load(n) {
+      fetch(%q, { mode: "no-cors" }).then(() => { document.getElementById("tty").src = %q; })
+        .catch(() => { if (n < 40) setTimeout(() => load(n + 1), 150); });
+    })(0);]], url, url) .. "</script></body></html>"
+end
+
+-- What the bubble shows for a message: the session's terminal when it has one, else the bubble.
+-- A question or an approval goes back to that terminal, where the session itself asks it.
+local function page(req, index, total)
+  local url = terminalFor(req)
+  if not url then
+    stopTerminal()
+    return bubbleHTML(req, index, total)
+  end
+  if req.wait then answer(req, "terminal"); req.wait = false end
+  if not pet.fixedH then pet.fixedH, pet.bw = 460, math.max(pet.bw, 620) end
+  return terminalHTML(url, index, total)
+end
+
 -- Placing and moving -----------------------------------------------------------------------
 
 -- Through the window's own app: hs.window.get(id) asks every app on the Mac for its windows, and
@@ -457,6 +520,7 @@ local function remove()
   mouseTap:stop()
   drag, resize = nil, nil
   for _, timer in pairs({ pet.timer, pet.runTimer, pet.leaveTimer }) do timer:stop() end
+  stopTerminal()
   pet.canvas:delete()
   if pet.web then pet.web:delete() end
   pet = nil
@@ -468,7 +532,7 @@ local function render(walk)
   local req = pet.items[pet.index]
   pet.home = MOOD[req.kind]
   if sheet then play(pet.home, true) else pet.canvas:replaceElements(table.unpack(drawnPet(req.kind, pet.size))) end
-  pet.web:html(bubbleHTML(req, pet.index, #pet.items))
+  pet.web:html(page(req, pet.index, #pet.items))
   local function open()
     placeBubble()
     pet.web:show(0.12)
@@ -588,7 +652,7 @@ local function create(req)
     :level(hs.drawing.windowLevels.floating)
     :behaviorAsLabels({ "canJoinAllSpaces", "stationary" })
   pet.canvas:show(0.2)
-  pet.web:html(bubbleHTML(req, 1, 1))
+  pet.web:html(page(req, 1, 1))
   runTo(dest, from, function()
     placeBubble()
     if pet and pet.web then pet.web:show(0.15) end
@@ -733,6 +797,8 @@ local function onMouse(e)
     pet.web:evaluateJavaScript("document.body.classList.add('fixed')")
     return true
   end
+  local win = pet.web:hswindow()
+  if win and hs.window.focusedWindow() == win then return false end -- active already: a normal click
   local x, y = math.floor(p.x - f.x), math.floor(p.y - f.y)
   hs.timer.doAfter(0, function()
     if not (pet and pet.web) then return end
@@ -746,6 +812,7 @@ local function onMouse(e)
       const el = document.elementFromPoint(%d, %d);
       const target = el && el.closest("button, input");
       if (target && target.tagName === "INPUT") target.focus(); else if (target) target.click();
+      else if (el && el.tagName === "IFRAME") el.focus();
     })()]], x, y))
   end)
   return true
@@ -825,10 +892,11 @@ end
 -- For checking from the hs command line: the pet on screen, or nil.
 function M.current() return pet end
 
--- Shows a message without the plugin, to see how it looks: require("mascota").demo("question").
-function M.demo(kind)
+-- Shows a message without the plugin, to see how it looks: require("mascota").demo("question"); with
+-- a background session's short id as second argument, its terminal.
+function M.demo(kind, bg)
   kind = kind or "done"
-  add({ kind = kind, session = "demo-" .. kind, id = "demo-" .. kind, label = "demo", tool = "Bash",
+  add({ kind = kind, session = "demo-" .. kind, id = "demo-" .. kind, label = "demo", tool = "Bash", bg = bg,
     detail = "git push origin feature/mascota", text = "This is how a finished session looks.", seconds = 42,
     status = { model = "Opus 5.5", branch = "main", repo = "hammerspoon-zonas", pct = 34, usd = 1.27, minutes = 18 },
     questions = { { question = "Which layout should the laptop use?", multiSelect = false, options = {
@@ -842,6 +910,8 @@ function M.start()
   for file in hs.fs.dir(INBOX) do
     if file:match("%.json$") or file:match("%.answer$") then os.remove(INBOX .. "/" .. file) end
   end
+  -- A reload leaves the terminals of the pet it replaced running.
+  hs.task.new("/usr/bin/pkill", nil, { "-9", "-f", "ttyd -p [0-9]* -i lo0 -O -W -b /" }):start()
   watcher = hs.pathwatcher.new(INBOX, poll):start()
   idleTimer = hs.timer.new(0.5, comeOut)
   local types = hs.eventtap.event.types
