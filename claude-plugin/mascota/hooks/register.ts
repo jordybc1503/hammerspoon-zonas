@@ -25,6 +25,23 @@ const ASKING_MODES = new Set(["default", "acceptEdits", "plan"]);
 let mode: string | undefined;
 let lastAsk: { tool: string; detail: string } | undefined;
 
+// What the status line shows, for the bubble: model, branch, context, cost and time.
+async function statusLine($: EngineInterface): Promise<object> {
+  const cwd = await $.session.cwd();
+  const [model, usage, git] = await Promise.all([
+    $.session.model(),
+    $.session.usage(),
+    $.process.run(["git", "-C", cwd, "branch", "--show-current"]).catch(() => undefined),
+  ]);
+  return {
+    model,
+    branch: git?.stdout.trim() || undefined,
+    pct: Math.round(usage.context.percent ?? 0),
+    usd: usage.cost?.usd,
+    minutes: Math.floor((Date.now() - usage.startedAt) / 60000),
+  };
+}
+
 async function send($: EngineInterface, kind: string, fields: object, wait = false): Promise<string> {
   const id = `${session}-${++count}`;
   label ??= (await $.session.cwd()).split("/").pop() ?? "";
@@ -32,7 +49,9 @@ async function send($: EngineInterface, kind: string, fields: object, wait = fal
     const job = (await $.env.get("CLAUDE_CODE_SESSION_KIND")) === "bg" && (await $.env.get("CLAUDE_JOB_DIR"));
     bg = job ? (job.split("/").pop() ?? null) : null;
   }
-  const request = JSON.stringify({ kind, session, id, label, wait, ...(bg ? { bg } : {}), ...fields });
+  // Only a message the bubble shows carries it: bind, working and end never reach the bubble.
+  const status = ["done", "question", "ask", "needs"].includes(kind) ? await statusLine($).catch(() => undefined) : undefined;
+  const request = JSON.stringify({ kind, session, id, label, wait, status, ...(bg ? { bg } : {}), ...fields });
   const run = await $.process.run(["/bin/sh", "-c", SCRIPT, "mascota", id, request, wait ? "1" : "0"], {
     timeoutMs: 600_000,
   });

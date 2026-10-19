@@ -10,7 +10,8 @@ local M = {}
 local INBOX = os.getenv("HOME") .. "/Library/Caches/mascota"
 local REPLIES = INBOX .. "/replies"
 local TERMINALS = { ["com.mitchellh.ghostty"] = true, ["com.googlecode.iterm2"] = true, ["com.apple.Terminal"] = true }
-local BW = 340 -- bubble width; the pet stands to its right
+local BW = 340 -- bubble width until you resize it; the pet stands to its right
+local BUBBLE = "mascota.bubble" -- { w, h } you gave the bubble by dragging its top-left corner
 local GAP = 10 -- between the bubble and the pet
 
 -- The pet is a Codex pet (~/.codex/pets/<id>): an 8 × 11 sheet of 192 × 208 frames, one animation
@@ -44,6 +45,7 @@ local windows = {} -- session → { app, id } of the window you last typed into
 local status = {} -- session → { state, at }
 local pet -- the pet on screen: { canvas, web, items, index, size, ... } or nil
 local drag -- the pet being dragged: { from, at, moved }
+local resize -- the bubble being resized: { from, w, h }
 local sheet, petName, loadedId = nil, nil, nil
 local watcher, mouseTap, tapGuard, idleTimer
 local queue, waitingSince = {}, 0 -- messages waiting for you to pause, before the pet comes out
@@ -226,6 +228,13 @@ html, body { margin: 0; background: transparent; overflow: hidden;
 .nav button:hover { color: #fff; }
 h1 { font-size: 15px; margin: 0 0 2px; }
 .where { color: #9aa5b5; font-size: 12px; margin-bottom: 6px; }
+.sl { font: 11px/1.5 Menlo, monospace; color: #c9d1dc; background: #12161d; border-radius: 6px;
+  padding: 4px 7px; margin-bottom: 8px; white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.sl .c { color: #56c2d6; } .sl .g { color: #4fbf6f; } .sl .y { color: #e0b84a; } .sl .r { color: #e06060; }
+.grip { position: absolute; left: 4px; top: 4px; width: 8px; height: 8px; cursor: nwse-resize;
+  border-top: 2px solid #8d98b0; border-left: 2px solid #8d98b0; border-top-left-radius: 4px; }
+body.fixed .b { height: calc(100vh - 6px); display: flex; flex-direction: column; }
+body.fixed .detail { flex: 1; max-height: none; overflow-y: auto; }
 .detail { font: 12px/1.35 Menlo, monospace; color: #dcdcdc; max-height: 4.1em; overflow: hidden;
   margin-bottom: 8px; word-break: break-word; }
 .answer { font: 13px/1.45 -apple-system, system-ui, sans-serif; max-height: 15em; overflow-y: auto;
@@ -281,6 +290,23 @@ local function esc(s)
   return (tostring(s or ""):gsub("[&<>\"]", { ["&"] = "&amp;", ["<"] = "&lt;", [">"] = "&gt;", ['"'] = "&quot;" }))
 end
 
+-- The session's status line, as Claude Code draws it: [model] | 🌿 branch | 📁 folder, then the
+-- context bar, cost and time. Older plugins send no status: just the folder then.
+local function statusHTML(req)
+  local st = type(req.status) == "table" and req.status
+  if not st then return nil end
+  local pct = math.max(0, math.min(100, math.floor(tonumber(st.pct) or 0)))
+  local color = pct >= 90 and "r" or pct >= 70 and "y" or "g"
+  local first = '<span class="c">[' .. esc(st.model) .. "]</span>"
+    .. (st.branch and (" | 🌿 " .. esc(st.branch)) or "") .. " | 📁 " .. esc(req.label)
+  local second = string.format('<span class="%s">%s%s</span> %d%%', color,
+    string.rep("█", pct // 10), string.rep("░", 10 - pct // 10), pct)
+    .. (tonumber(st.usd) and string.format(' | <span class="y">$%.2f</span>', st.usd) or "")
+    .. (tonumber(st.minutes) and (" | " .. math.floor(st.minutes) .. "m") or "")
+    .. (req.seconds and (" | ⏱ " .. req.seconds .. " s") or "")
+  return '<div class="sl">' .. first .. "\n" .. second .. "</div>"
+end
+
 -- The bubble as a small web page: the counts and the pager on top, then the message, then what
 -- you can do about it.
 local function bubbleHTML(req, index, total)
@@ -313,10 +339,11 @@ local function bubbleHTML(req, index, total)
   local working, waiting = counts()
   local data = string.format("const Q = %s; const WORDS = %s;",
     q and hs.json.encode(q) or "null", hs.json.encode({ working = t("working"), waiting = t("waiting"), close = t("close") }))
-  return "<!doctype html><html><head><meta charset=\"utf-8\"><style>" .. CSS .. "</style></head><body>"
-    .. '<div class="b"><div class="top"><div class="counts" id="counts"></div><div class="nav" id="nav"></div></div>'
+  return "<!doctype html><html><head><meta charset=\"utf-8\"><style>" .. CSS .. "</style></head>"
+    .. (pet and pet.fixedH and '<body class="fixed">' or "<body>")
+    .. '<div class="b"><div class="grip"></div><div class="top"><div class="counts" id="counts"></div><div class="nav" id="nav"></div></div>'
     .. "<h1>" .. esc(title) .. "</h1>"
-    .. '<div class="where">' .. esc(where) .. "</div>"
+    .. (statusHTML(req) or ('<div class="where">' .. esc(where) .. "</div>"))
     .. (detail and detail ~= "" and ('<div class="detail' .. (req.kind == "done" and " answer" or "") .. '">'
       .. esc(detail) .. "</div>") or "")
     .. controls .. "</div><script>" .. data:gsub("</", "<\\/") .. JS
@@ -342,9 +369,11 @@ local function shows(session, w)
   return not entry.bg or (w:title() or ""):find(entry.bg, 1, true) ~= nil
 end
 
+local FRONT = "return id of focused terminal of selected tab of front window"
+
 -- Through osascript in a task: hs.osascript waits on Ghostty on the main thread.
 local function ghostty(script, done)
-  hs.task.new("/usr/bin/osascript", done and function(code, out) if code == 0 then done(out) end end,
+  hs.task.new("/usr/bin/osascript", done and function(code, out) done(code == 0 and out or nil) end,
     { "-e", 'tell application "Ghostty"\n' .. script .. "\nend tell" }):start()
 end
 
@@ -374,7 +403,7 @@ local function spotFor(req)
   local w = windowOf(req.session)
   local area = w and w:frame() or hs.screen.mainScreen():frame()
   local s = (w and w:screen() or hs.screen.mainScreen()):frame()
-  local x = math.max(s.x + BW + GAP, math.min(area.x + area.w - pet.size.w - 16, s.x + s.w - pet.size.w))
+  local x = math.max(s.x + pet.bw + GAP, math.min(area.x + area.w - pet.size.w - 16, s.x + s.w - pet.size.w))
   local y = math.max(s.y, math.min(area.y + area.h - pet.size.h - 16, s.y + s.h - pet.size.h))
   return { x = x, y = y }, s
 end
@@ -383,7 +412,8 @@ end
 local function placeBubble()
   if not pet.web then return end
   local f = pet.canvas:frame()
-  pet.web:frame({ x = f.x - GAP - BW - 12, y = f.y + f.h - pet.webH, w = BW + 12, h = pet.webH })
+  local h = pet.fixedH or pet.webH
+  pet.web:frame({ x = f.x - GAP - pet.bw - 12, y = f.y + f.h - h, w = pet.bw + 12, h = h })
 end
 
 -- A new walk or a drag ends the run in progress, which would otherwise keep moving the pet.
@@ -423,7 +453,7 @@ local function remove()
   if not pet then return end
   -- With no pet there is nothing to click or drag: the mouse listener rests.
   mouseTap:stop()
-  drag = nil
+  drag, resize = nil, nil
   for _, timer in pairs({ pet.timer, pet.runTimer, pet.leaveTimer }) do timer:stop() end
   pet.canvas:delete()
   if pet.web then pet.web:delete() end
@@ -480,15 +510,32 @@ local function removeSession(session, reply)
   end
 end
 
+-- Calls yes() when you are looking at the session itself: its window, and in Ghostty its very tab
+-- (all tabs share one window), else no().
+local function inSession(session, w, yes, no)
+  local entry = windows[session]
+  if not shows(session, w) then return no() end
+  if not entry.term then return yes() end
+  ghostty(FRONT, function(out)
+    if out and out:match("^%s*([%w%-]+)") == entry.term then yes() else no() end
+  end)
+end
+
 -- Going to a window yourself answers for the pet: the normal prompt is right there. A plain check
--- twice a second, only while the pet is out: hs.window.filter watches every app's windows.
+-- twice a second, only while the pet is out: hs.window.filter watches every app's windows. A
+-- Ghostty session is asked about on every check, as switching tabs keeps the window.
 local function checkFocus()
   local w = hs.window.focusedWindow()
   local id = w and w:id()
-  if not id or id == pet.lastFocus then return end
+  if not id then return end
+  local changed = id ~= pet.lastFocus
   pet.lastFocus = id
-  for session in pairs(windows) do
-    if shows(session, w) then removeSession(session, "terminal") end
+  local shown = {}
+  for _, item in ipairs(pet.items) do shown[item.session] = true end
+  for session in pairs(shown) do
+    if (changed or (windows[session] and windows[session].term)) and shows(session, w) then
+      inSession(session, w, function() if pet and not pet.leaving then removeSession(session, "terminal") end end, function() end)
+    end
   end
 end
 
@@ -507,6 +554,8 @@ local function create(req)
   local k = SIZES[p.size] or SIZES.m
   pet = { size = { w = math.floor(FW * k), h = math.floor(FH * k) }, items = { req }, index = 1,
     look = p.look, run = p.run, webH = 160 }
+  local saved = hs.settings.get(BUBBLE) or {}
+  pet.bw, pet.fixedH = saved.w or BW, saved.h
   local dest, screen = spotFor(req)
   local fromLeft = dest.x - screen.x > screen.x + screen.w - dest.x
   local from = { x = fromLeft and math.max(screen.x, dest.x - 380) or math.min(screen.x + screen.w - pet.size.w, dest.x + 380), y = dest.y }
@@ -517,7 +566,8 @@ local function create(req)
   if sheet then
     pet.canvas:appendElements({ type = "image", image = sheet, imageScaling = "scaleToFit",
       frame = { x = 0, y = 0, w = 8 * pet.size.w, h = 11 * pet.size.h } })
-    play(MOOD[req.kind], true)
+    pet.home = MOOD[req.kind] -- what it plays again after resting; render sets it for later messages
+    play(pet.home, true)
   else
     pet.canvas:appendElements(table.unpack(drawnPet(req.kind, pet.size)))
   end
@@ -528,7 +578,7 @@ local function create(req)
   mouseTap:start()
   local uc = hs.webview.usercontent.new("mascota")
   uc:setCallback(function(m) if type(m.body) == "table" then onMessage(m.body) end end)
-  pet.web = hs.webview.new({ x = dest.x - GAP - BW - 12, y = dest.y, w = BW + 12, h = pet.webH }, {}, uc)
+  pet.web = hs.webview.new({ x = dest.x - GAP - pet.bw - 12, y = dest.y, w = pet.bw + 12, h = pet.fixedH or pet.webH }, {}, uc)
     :windowStyle({ "borderless", "nonactivating" })
     :transparent(true)
     :allowTextEntry(false) -- it cannot take the keyboard from what you are typing until you click it
@@ -660,8 +710,27 @@ local function onMouse(e)
     end
     return true
   end
+  -- The bubble's top-left corner resizes it (the pet and the bottom-right stay put); the size is
+  -- kept for the next bubbles.
+  if resize and kind == types.leftMouseDragged then
+    pet.bw = math.max(260, math.min(900, resize.w + resize.from.x - p.x))
+    pet.fixedH = math.max(120, math.min(900, resize.h + resize.from.y - p.y))
+    placeBubble()
+    return true
+  end
+  if resize and kind == types.leftMouseUp then
+    resize = nil
+    hs.settings.set(BUBBLE, { w = pet.bw, h = pet.fixedH })
+    return true
+  end
   local f = kind == types.leftMouseDown and pet.web and pet.web:isVisible() and pet.web:frame()
   if not inside(p, f) then return false end
+  if p.x - f.x < 18 and p.y - f.y < 18 then
+    resize = { from = p, w = pet.bw, h = pet.fixedH or pet.webH }
+    pet.fixedH = resize.h
+    pet.web:evaluateJavaScript("document.body.classList.add('fixed')")
+    return true
+  end
   local x, y = math.floor(p.x - f.x), math.floor(p.y - f.y)
   hs.timer.doAfter(0, function()
     if not (pet and pet.web) then return end
@@ -715,8 +784,8 @@ local function handle(req)
       windows[req.session] = entry
       -- Ghostty's tabs and splits: remember the very terminal you typed in.
       if app:bundleID() == "com.mitchellh.ghostty" and not req.bg then
-        ghostty("return id of focused terminal of selected tab of front window", function(out)
-          entry.term = out:match("^%s*([%w%-]+)")
+        ghostty(FRONT, function(out)
+          entry.term = out and out:match("^%s*([%w%-]+)")
         end)
       end
     end
@@ -724,13 +793,15 @@ local function handle(req)
   end
   local p = settings()
   local wanted = p.enabled and p.events[EVENT[req.kind]]
-  -- Switched off, not wanted for this event, or you are already in that window: no pet. The
+  -- Switched off, not wanted for this event, or you are already in that tab: no pet. The
   -- settings come first: asking windows can wait on a slow app.
-  if not wanted or shows(req.session, hs.window.focusedWindow()) then
+  if not wanted then
     if req.wait then answer(req, "terminal") end
     return
   end
-  add(req)
+  inSession(req.session, hs.window.focusedWindow(), function()
+    if req.wait then answer(req, "terminal") end
+  end, function() add(req) end)
 end
 
 local function poll()
@@ -757,6 +828,7 @@ function M.demo(kind)
   kind = kind or "done"
   add({ kind = kind, session = "demo-" .. kind, id = "demo-" .. kind, label = "demo", tool = "Bash",
     detail = "git push origin feature/mascota", text = "This is how a finished session looks.", seconds = 42,
+    status = { model = "Opus 5.5", branch = "main", pct = 34, usd = 1.27, minutes = 18 },
     questions = { { question = "Which layout should the laptop use?", multiSelect = false, options = {
       { label = "Halves", description = "Two columns" }, { label = "Thirds", description = "Three columns" } } } } })
 end
