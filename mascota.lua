@@ -228,8 +228,11 @@ html, body { margin: 0; background: transparent; overflow: hidden;
 .nav button:hover { color: #fff; }
 h1 { font-size: 15px; margin: 0 0 2px; }
 .where { color: #9aa5b5; font-size: 12px; margin-bottom: 6px; }
-.sl { font: 11px/1.5 Menlo, monospace; color: #c9d1dc; background: #12161d; border-radius: 6px;
-  padding: 4px 7px; margin-bottom: 8px; white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.foot { display: flex; align-items: center; gap: 8px; margin: 8px -12px -12px; padding: 5px 10px 5px 12px;
+  background: #12161d; border-top: 1px solid #2a303c; border-radius: 0 0 12px 12px; }
+.sl { flex: 1; min-width: 0; font: 11px/1.5 Menlo, monospace; color: #c9d1dc; }
+.sl div { white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.foot .link { flex: none; padding: 4px 0; }
 .sl .c { color: #56c2d6; } .sl .g { color: #4fbf6f; } .sl .y { color: #e0b84a; } .sl .r { color: #e06060; }
 .grip { position: absolute; left: 4px; top: 4px; width: 8px; height: 8px; cursor: nwse-resize;
   border-top: 2px solid #8d98b0; border-left: 2px solid #8d98b0; border-top-left-radius: 4px; }
@@ -290,7 +293,7 @@ local function esc(s)
   return (tostring(s or ""):gsub("[&<>\"]", { ["&"] = "&amp;", ["<"] = "&lt;", [">"] = "&gt;", ['"'] = "&quot;" }))
 end
 
--- The session's status line, as Claude Code draws it: [model] | 🌿 branch | 🔗 repo, then the
+-- The session's status line at the foot of the bubble, as Claude Code draws it under its prompt: [model] | 🌿 branch | 🔗 repo, then the
 -- context bar, cost and time. Older plugins send no status: just the folder then.
 local function statusHTML(req)
   local st = type(req.status) == "table" and req.status
@@ -304,11 +307,11 @@ local function statusHTML(req)
     .. (tonumber(st.usd) and string.format(' | <span class="y">$%.2f</span>', st.usd) or "")
     .. (tonumber(st.minutes) and (" | " .. math.floor(st.minutes) .. "m") or "")
     .. (req.seconds and (" | ⏱ " .. req.seconds .. " s") or "")
-  return '<div class="sl">' .. first .. "\n" .. second .. "</div>"
+  return '<div class="sl"><div>' .. first .. "</div><div>" .. second .. "</div></div>"
 end
 
 -- The bubble as a small web page: the counts and the pager on top, then the message, then what
--- you can do about it.
+-- you can do about it, and at the foot the status line with the way to the terminal.
 local function bubbleHTML(req, index, total)
   local title = req.kind == "ask" and string.format(t("ask"), req.tool or "?") or t(req.kind)
   local where = "▸ " .. (req.label or "") .. (req.seconds and ("  ·  " .. req.seconds .. " s") or "")
@@ -319,7 +322,7 @@ local function bubbleHTML(req, index, total)
   local controls
   if req.kind == "ask" then
     controls = '<div class="row"><button class="allow" data-a="allow">' .. esc(t("allow")) .. '</button>'
-      .. '<button class="deny" data-a="deny">' .. esc(t("deny")) .. "</button>" .. go .. "</div>"
+      .. '<button class="deny" data-a="deny">' .. esc(t("deny")) .. "</button></div>"
   elseif q then
     local opts = {}
     for i, o in ipairs(q.options or {}) do
@@ -328,14 +331,13 @@ local function bubbleHTML(req, index, total)
     controls = '<div class="col">' .. table.concat(opts) .. "</div>"
       .. '<div class="row"><input id="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="' .. esc(t("other")) .. '">'
       .. '<button class="send" id="send">' .. esc(t("send")) .. "</button></div>"
-      .. '<div class="row">' .. go .. "</div>"
   elseif req.kind == "done" then
     controls = '<div class="row"><input id="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="' .. esc(t("reply")) .. '">'
       .. '<button class="send" id="send">' .. esc(t("send")) .. "</button></div>"
-      .. '<div class="row">' .. go .. "</div>"
   else
-    controls = '<div class="row">' .. go .. "</div>"
+    controls = ""
   end
+  local status = statusHTML(req)
   local working, waiting = counts()
   local data = string.format("const Q = %s; const WORDS = %s;",
     q and hs.json.encode(q) or "null", hs.json.encode({ working = t("working"), waiting = t("waiting"), close = t("close") }))
@@ -343,10 +345,10 @@ local function bubbleHTML(req, index, total)
     .. (pet and pet.fixedH and '<body class="fixed">' or "<body>")
     .. '<div class="b"><div class="grip"></div><div class="top"><div class="counts" id="counts"></div><div class="nav" id="nav"></div></div>'
     .. "<h1>" .. esc(title) .. "</h1>"
-    .. (statusHTML(req) or ('<div class="where">' .. esc(where) .. "</div>"))
+    .. (status and "" or ('<div class="where">' .. esc(where) .. "</div>"))
     .. (detail and detail ~= "" and ('<div class="detail' .. (req.kind == "done" and " answer" or "") .. '">'
       .. esc(detail) .. "</div>") or "")
-    .. controls .. "</div><script>" .. data:gsub("</", "<\\/") .. JS
+    .. controls .. '<div class="foot">' .. (status or "") .. go .. "</div></div><script>" .. data:gsub("</", "<\\/") .. JS
     .. string.format("pager(%d, %d); counts(%d, %d);", index, total, working, waiting) .. "</script></body></html>"
 end
 
