@@ -41,11 +41,13 @@ local STR = {
     allow = "Aprobar", deny = "Rechazar", go = "Ir a la terminal →", reply = "Responde a Claude…", send = "Enviar",
     other = "Otra respuesta…", working = "trabajando", waiting = "te esperan", idle = "terminadas", close = "Cerrar",
     sWorking = "trabajando", sWaiting = "te espera", sIdle = "terminada",
+    prev = "Mensaje anterior", next = "Mensaje siguiente", state = "Qué hace esta sesión ahora",
     minimize = "Minimizar (clic en la mascota para abrir)" },
   en = { done = "Done!", question = "I have a question", needs = "I need you in the terminal", ask = "May I use %s?",
     allow = "Approve", deny = "Deny", go = "Go to terminal →", reply = "Reply to Claude…", send = "Send",
     other = "Another answer…", working = "working", waiting = "waiting for you", idle = "done", close = "Close",
     sWorking = "working", sWaiting = "needs input", sIdle = "done",
+    prev = "Previous message", next = "Next message", state = "What this session is doing now",
     minimize = "Minimize (click the pet to open)" },
 }
 local function t(k) return (STR[require("zonas").lang()] or STR.en)[k] end
@@ -192,16 +194,27 @@ local function answer(req, value) write(INBOX .. "/" .. req.id .. ".answer", val
 
 -- Counts -----------------------------------------------------------------------------------
 
--- A session silent for 3 hours is gone (closed without telling us).
+-- A background session's name, which its terminal carries as its title ("◐ <name>"); its job
+-- folder keeps it, and it can change (Claude names a session after its first prompts).
+local function bgName(bg)
+  local file = os.getenv("HOME") .. "/.claude/jobs/" .. bg .. "/state.json"
+  local state = hs.fs.attributes(file) and hs.json.read(file)
+  return type(state) == "table" and type(state.name) == "string" and state.name ~= "" and state.name or nil
+end
+
+-- How many sessions are working, waiting for you and done, and their names for the hints. A
+-- session silent for 3 hours is gone (closed without telling us).
 local function counts()
-  local working, waiting, idle, now = 0, 0, 0, os.time()
+  local by, now = { working = {}, waiting = {}, idle = {} }, os.time()
   for session, st in pairs(status) do
     if now - st.at > 3 * 3600 then status[session], windows[session] = nil, nil
-    elseif st.state == "working" then working = working + 1
-    elseif st.state == "waiting" then waiting = waiting + 1
-    elseif st.state == "idle" then idle = idle + 1 end
+    elseif by[st.state] then
+      local name = st.bg and bgName(st.bg)
+      table.insert(by[st.state], (st.repo or st.label or "?") .. (name and (" · " .. name) or ""))
+    end
   end
-  return working, waiting, idle
+  for _, names in pairs(by) do table.sort(names) end
+  return #by.working, #by.waiting, #by.idle, by
 end
 
 -- What the session on show is doing now (the last word from it), else what its message says.
@@ -213,12 +226,13 @@ end
 -- The bubble's call that draws the counts and the state of the session on show, and the words
 -- its page needs.
 local function countsJS()
-  local w, a, i = counts()
-  return string.format("counts(%d, %d, %d); mine(%q);", w, a, i, stateOf(pet and pet.items[pet.index]))
+  local _, _, _, by = counts()
+  return string.format("counts(%s); mine(%q);", hs.json.encode(by), stateOf(pet and pet.items[pet.index]))
 end
 local function words()
   return hs.json.encode({ working = t("working"), waiting = t("waiting"), idle = t("idle"), close = t("close"),
-    minimize = t("minimize"), sWorking = t("sWorking"), sWaiting = t("sWaiting"), sIdle = t("sIdle") })
+    minimize = t("minimize"), sWorking = t("sWorking"), sWaiting = t("sWaiting"), sIdle = t("sIdle"),
+    prev = t("prev"), next = t("next"), state = t("state") })
 end
 
 local shownCounts
@@ -232,8 +246,12 @@ local function refreshCounts()
   require("zonas").badge((working > 0 and ("  ⚙" .. working) or "") .. (waiting > 0 and ("  ✋" .. waiting) or ""))
 end
 
-local function setStatus(session, state)
-  status[session] = state and { state = state, at = os.time() } or nil
+-- What a request says about its session, and where it comes from, for the hints.
+local function setStatus(session, state, req)
+  local old = status[session] or {}
+  status[session] = state and { state = state, at = os.time(), label = req and req.label or old.label,
+    bg = req and req.bg or old.bg,
+    repo = req and type(req.status) == "table" and type(req.status.repo) == "string" and req.status.repo or old.repo } or nil
   refreshCounts()
 end
 
@@ -253,6 +271,9 @@ html, body { margin: 0; background: transparent; overflow: hidden;
 .counts span { display: inline-flex; align-items: center; gap: 3px; }
 .repo { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font: 600 12px Menlo, monospace; color: #c9d1dc; }
+#tip { position: fixed; z-index: 9; display: none; max-width: calc(100% - 24px); padding: 6px 9px;
+  border-radius: 7px; background: #0d1015; border: 1px solid #45506a; color: #e8ebf0; pointer-events: none;
+  font: 12px/1.45 -apple-system, system-ui, sans-serif; white-space: pre-line; box-shadow: 0 4px 14px rgba(0, 0, 0, .5); }
 .state { flex: none; font: 600 11px -apple-system, system-ui, sans-serif; padding: 1px 7px; border-radius: 9px; }
 .state.work { color: #6f9dff; background: rgba(79, 140, 255, .15); }
 .state.wait { color: #f0a24a; background: rgba(240, 162, 74, .15); }
@@ -304,21 +325,40 @@ function mine(s) {
   if (!el) return;
   el.className = m ? "state " + m[0] : "state";
   el.textContent = m ? `${m[1]} ${m[2]}` : "";
+  el.dataset.tip = WORDS.state;
 }
-// Sessions working, waiting for you and done, as an icon and a number each; the word on hover.
-function counts(working, waiting, idle) {
-  const c = (n, cls, icon, word) => n ? `<span class="${cls}" title="${n} ${word}">${icon} ${n}</span>` : "";
+// Sessions working, waiting for you and done, as an icon and a number each; which ones on hover.
+function counts(by) {
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  const c = (list, cls, icon, word) => {
+    const n = Array.isArray(list) ? list.length : 0;
+    if (!n) return "";
+    const tip = `${icon} ${n} ${word}\n` + list.map(x => "• " + x).join("\n");
+    return `<span class="${cls}" data-tip="${esc(tip)}">${icon} ${n}</span>`;
+  };
   document.getElementById("counts").innerHTML =
-    c(working, "work", "⚙️", WORDS.working) + c(waiting, "wait", "✋", WORDS.waiting) + c(idle, "idle", "✓", WORDS.idle);
+    c(by.working, "work", "⚙️", WORDS.working) + c(by.waiting, "wait", "✋", WORDS.waiting) + c(by.idle, "idle", "✓", WORDS.idle);
   size();
+}
+// The hint under what the pointer is on; Hammerspoon says where the pointer is (-1 when it left).
+function hover(x, y) {
+  const tip = document.getElementById("tip");
+  const hit = x >= 0 && document.elementFromPoint(x, y);
+  const el = hit && hit.closest("[data-tip]");
+  if (!el) { tip.style.display = "none"; return; }
+  tip.textContent = el.dataset.tip;
+  tip.style.display = "block";
+  const r = el.getBoundingClientRect();
+  tip.style.left = Math.max(4, Math.min(r.left, innerWidth - tip.offsetWidth - 16)) + "px";
+  tip.style.top = (r.bottom + 6) + "px";
 }
 function size() { post({ action: "size", h: document.querySelector(".b").offsetHeight + 8 }); }
 function bind(root) { for (const b of root.querySelectorAll("[data-a]")) b.onclick = () => post({ action: b.dataset.a }); }
 // The pager is redrawn on its own, so a new message never wipes what you are typing.
 function pager(i, n) {
   const nav = document.getElementById("nav");
-  nav.innerHTML = (n > 1 ? `<button data-a="prev">‹</button>${i}/${n}<button data-a="next">›</button>` : "")
-    + `<button data-a="min" title="${WORDS.minimize}">–</button><button data-a="close" title="${WORDS.close}">×</button>`;
+  nav.innerHTML = (n > 1 ? `<button data-a="prev" data-tip="${WORDS.prev}">‹</button>${i}/${n}<button data-a="next" data-tip="${WORDS.next}">›</button>` : "")
+    + `<button data-a="min" data-tip="${WORDS.minimize}">–</button><button data-a="close" data-tip="${WORDS.close}">×</button>`;
   bind(nav);
 }
 bind(document);
@@ -364,7 +404,10 @@ local function placeHTML(req)
   local repo = type(req.status) == "table" and type(req.status.repo) == "string" and req.status.repo
   local name = repo or req.label
   if not name or name == "" then return '<span class="state" id="state"></span>' end
-  return '<span class="repo">' .. (repo and "🔗 " or "📁 ") .. esc(name) .. '</span><span class="state" id="state"></span>'
+  local branch = type(req.status) == "table" and type(req.status.branch) == "string" and ("\n🌿 " .. req.status.branch) or ""
+  local tip = (repo and "🔗 " or "📁 ") .. name .. (req.bg and bgName(req.bg) and ("\n💬 " .. bgName(req.bg)) or "") .. branch
+  return '<span class="repo" data-tip="' .. esc(tip) .. '">' .. (repo and "🔗 " or "📁 ") .. esc(name)
+    .. '</span><span class="state" id="state"></span>'
 end
 
 -- The bubble as a small web page: the counts and the pager on top, then the message, then what
@@ -404,7 +447,7 @@ local function bubbleHTML(req, index, total)
     .. (status and "" or ('<div class="where">' .. esc(where) .. "</div>"))
     .. (detail and detail ~= "" and ('<div class="detail' .. (req.kind == "done" and " answer" or "") .. '">'
       .. esc(detail) .. "</div>") or "")
-    .. controls .. '<div class="foot">' .. (status or "") .. go .. "</div></div><script>" .. data:gsub("</", "<\\/") .. JS
+    .. controls .. '<div class="foot">' .. (status or "") .. go .. '</div></div><div id="tip"></div><script>' .. data:gsub("</", "<\\/") .. JS
     .. string.format("pager(%d, %d); ", index, total) .. countsJS() .. "</script></body></html>"
 end
 
@@ -437,7 +480,7 @@ local function terminalHTML(url, req, index, total)
   return "<!doctype html><html><head><meta charset=\"utf-8\"><style>" .. CSS .. "</style></head>"
     .. '<body class="fixed"><div class="b"><div class="grip"></div><div class="top"><div class="counts" id="counts"></div>' .. placeHTML(req)
     .. '<button class="link" data-a="go">' .. esc(t("go")) .. '</button><div class="nav" id="nav"></div></div>'
-    .. '<div class="tty"><iframe id="tty"></iframe></div></div><script>' .. data:gsub("</", "<\\/") .. JS
+    .. '<div class="tty"><iframe id="tty"></iframe></div></div><div id="tip"></div><script>' .. data:gsub("</", "<\\/") .. JS
     .. string.format("pager(%d, %d); ", index, total) .. countsJS()
     .. string.format([[(function load(n) {
       fetch(%q, { mode: "no-cors" }).then(() => { document.getElementById("tty").src = %q; })
@@ -467,14 +510,6 @@ local function windowOf(session)
   local w = entry and entry.app:getWindow(entry.id)
   if entry and not w and not entry.term then windows[session] = nil end
   return w
-end
-
--- A background session's name, which its terminal carries as its title ("◐ <name>"); its job
--- folder keeps it, and it can change (Claude names a session after its first prompts).
-local function bgName(bg)
-  local file = os.getenv("HOME") .. "/.claude/jobs/" .. bg .. "/state.json"
-  local state = hs.fs.attributes(file) and hs.json.read(file)
-  return type(state) == "table" and type(state.name) == "string" and state.name ~= "" and state.name or nil
 end
 
 -- Background sessions (`claude agents`) all share the agent view's window: only a title that
@@ -669,9 +704,23 @@ local function checkFocus()
   end
 end
 
+-- The bubble's hints: its page cannot see the pointer while the bubble is not active, so it is
+-- told where the pointer is, only when it moves.
+local function hover()
+  if not (pet.web and not pet.minimized and pet.web:isVisible()) then return end
+  local m, f = hs.mouse.absolutePosition(), pet.web:frame()
+  local over = m.x >= f.x and m.x < f.x + f.w and m.y >= f.y and m.y < f.y + f.h
+  local x, y = math.floor(m.x - f.x), math.floor(m.y - f.y)
+  local key = over and (x .. "," .. y) or "out"
+  if key == pet.hoverKey then return end
+  pet.hoverKey = key
+  pet.web:evaluateJavaScript(over and string.format("hover(%d, %d)", x, y) or "hover(-1, -1)")
+end
+
 local function tick()
   if not pet then return end
   animate()
+  hover()
   pet.ticks = pet.ticks + 1
   if pet.ticks % 5 == 0 and not pet.leaving then checkFocus() end
 end
@@ -919,7 +968,7 @@ local function handle(req)
     windows[req.session] = nil
     return setStatus(req.session, nil)
   end
-  setStatus(req.session, STATE[req.kind])
+  setStatus(req.session, STATE[req.kind], req)
   if req.kind == "working" then return end
   if req.kind == "bind" then
     local w = hs.window.focusedWindow()
