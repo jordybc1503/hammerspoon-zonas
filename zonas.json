@@ -1,34 +1,76 @@
 {
-  "lang": "auto",
-  "gap": 0,
-  "active": "centro34-lectura",
-  "keys": {
-    "mods": [
-      "ctrl",
-      "alt"
-    ],
-    "full": "return",
-    "drag": "shift",
-    "merge": "ctrl",
-    "translate": {
-      "mods": [
+  "active" : "centro34-lectura",
+  "keys" : {
+    "drag" : "shift",
+    "full" : "return",
+    "translate" : {
+      "key" : "t",
+      "mods" : [
         "cmd",
         "alt"
+      ]
+    },
+    "merge" : "ctrl",
+    "mods" : [
+      "ctrl",
+      "alt"
+    ]
+  },
+  "lang" : "auto",
+  "layouts" : [
+    {
+      "floats" : [
+
       ],
-      "key": "t"
+      "id" : "d1792402442692",
+      "root" : {
+        "sizes" : [
+          0.33333333333333331,
+          0.33333333333333331,
+          0.33333333333333331
+        ],
+        "dir" : "h",
+        "children" : [
+          {
+            "sizes" : [
+              0.51500000000000001,
+              0.48499999999999999
+            ],
+            "dir" : "v",
+            "children" : [
+              {
+                "key" : "1"
+              },
+              {
+                "key" : "4"
+              }
+            ]
+          },
+          {
+            "key" : "2"
+          },
+          {
+            "key" : "3"
+          }
+        ]
+      },
+      "name" : "Thirds (mine)"
+    }
+  ],
+  "pet" : {
+    "run" : true,
+    "id" : "",
+    "enabled" : true,
+    "look" : true,
+    "size" : "m",
+    "events" : {
+      "needs" : true,
+      "question" : true,
+      "done" : true
     }
   },
-  "layouts": [],
-  "pet": {
-    "enabled": true,
-    "id": "",
-    "size": "m",
-    "look": true,
-    "run": true,
-    "events": {
-      "done": true,
-      "question": true,
-      "needs": true
-    }
-  }
+  "screens" : {
+    "LG ULTRAWIDE" : "d1792402442692"
+  },
+  "gap" : 0
 }
