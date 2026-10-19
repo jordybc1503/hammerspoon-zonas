@@ -40,10 +40,12 @@ local STR = {
   es = { done = "¡Listo!", question = "Tengo una pregunta", needs = "Te necesito en la terminal", ask = "¿Puedo usar %s?",
     allow = "Aprobar", deny = "Rechazar", go = "Ir a la terminal →", reply = "Responde a Claude…", send = "Enviar",
     other = "Otra respuesta…", working = "trabajando", waiting = "te esperan", idle = "terminadas", close = "Cerrar",
+    sWorking = "trabajando", sWaiting = "te espera", sIdle = "terminada",
     minimize = "Minimizar (clic en la mascota para abrir)" },
   en = { done = "Done!", question = "I have a question", needs = "I need you in the terminal", ask = "May I use %s?",
     allow = "Approve", deny = "Deny", go = "Go to terminal →", reply = "Reply to Claude…", send = "Send",
     other = "Another answer…", working = "working", waiting = "waiting for you", idle = "done", close = "Close",
+    sWorking = "working", sWaiting = "needs input", sIdle = "done",
     minimize = "Minimize (click the pet to open)" },
 }
 local function t(k) return (STR[require("zonas").lang()] or STR.en)[k] end
@@ -202,20 +204,32 @@ local function counts()
   return working, waiting, idle
 end
 
--- The bubble's call that draws the counts, and the words its page needs.
-local function countsJS() return string.format("counts(%d, %d, %d);", counts()) end
+-- What the session on show is doing now (the last word from it), else what its message says.
+local function stateOf(req)
+  local st = req and status[req.session]
+  return st and st.state or req and STATE[req.kind] or ""
+end
+
+-- The bubble's call that draws the counts and the state of the session on show, and the words
+-- its page needs.
+local function countsJS()
+  local w, a, i = counts()
+  return string.format("counts(%d, %d, %d); mine(%q);", w, a, i, stateOf(pet and pet.items[pet.index]))
+end
 local function words()
-  return hs.json.encode({ working = t("working"), waiting = t("waiting"), idle = t("idle"), close = t("close"), minimize = t("minimize") })
+  return hs.json.encode({ working = t("working"), waiting = t("waiting"), idle = t("idle"), close = t("close"),
+    minimize = t("minimize"), sWorking = t("sWorking"), sWaiting = t("sWaiting"), sIdle = t("sIdle") })
 end
 
 local shownCounts
 local function refreshCounts()
   local working, waiting, idle = counts()
+  -- The bubble always: the session on show may have changed state while the totals did not.
+  if pet and pet.web then pet.web:evaluateJavaScript(countsJS()) end
   local key = working .. "/" .. waiting .. "/" .. idle
   if key == shownCounts then return end
   shownCounts = key
   require("zonas").badge((working > 0 and ("  ⚙" .. working) or "") .. (waiting > 0 and ("  ✋" .. waiting) or ""))
-  if pet and pet.web then pet.web:evaluateJavaScript(countsJS()) end
 end
 
 local function setStatus(session, state)
@@ -239,6 +253,10 @@ html, body { margin: 0; background: transparent; overflow: hidden;
 .counts span { display: inline-flex; align-items: center; gap: 3px; }
 .repo { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font: 600 12px Menlo, monospace; color: #c9d1dc; }
+.state { flex: none; font: 600 11px -apple-system, system-ui, sans-serif; padding: 1px 7px; border-radius: 9px; }
+.state.work { color: #6f9dff; background: rgba(79, 140, 255, .15); }
+.state.wait { color: #f0a24a; background: rgba(240, 162, 74, .15); }
+.state.idle { color: #4fbf6f; background: rgba(79, 191, 111, .15); }
 .counts .work { color: #6f9dff; } .counts .wait { color: #f0a24a; } .counts .idle { color: #4fbf6f; }
 .nav { margin-left: auto; display: flex; align-items: center; gap: 2px; font-size: 11px; color: #9aa5b5; }
 .nav button { background: none; color: #c9d1dc; padding: 0 6px; font-size: 15px; line-height: 18px; }
@@ -279,6 +297,14 @@ input:focus { border-color: #8fb0ff; }
 
 local JS = [[
 const post = m => window.webkit.messageHandlers.mascota.postMessage(m);
+// The session on show: working, waiting for you or done.
+function mine(s) {
+  const el = document.getElementById("state");
+  const m = { working: ["work", "⚙️", WORDS.sWorking], waiting: ["wait", "✋", WORDS.sWaiting], idle: ["idle", "✓", WORDS.sIdle] }[s];
+  if (!el) return;
+  el.className = m ? "state " + m[0] : "state";
+  el.textContent = m ? `${m[1]} ${m[2]}` : "";
+}
 // Sessions working, waiting for you and done, as an icon and a number each; the word on hover.
 function counts(working, waiting, idle) {
   const c = (n, cls, icon, word) => n ? `<span class="${cls}" title="${n} ${word}">${icon} ${n}</span>` : "";
@@ -332,13 +358,13 @@ local function statusHTML(req)
   return '<div class="sl"><div>' .. first .. "</div><div>" .. second .. "</div></div>"
 end
 
--- The session's repository (named as its status line names it), else its folder: the top bar
--- says at a glance whose message this is.
+-- The session's repository (named as its status line names it), else its folder, and what it is
+-- doing: the top bar says at a glance whose message this is.
 local function placeHTML(req)
   local repo = type(req.status) == "table" and type(req.status.repo) == "string" and req.status.repo
   local name = repo or req.label
-  if not name or name == "" then return "" end
-  return '<span class="repo">' .. (repo and "🔗 " or "📁 ") .. esc(name) .. "</span>"
+  if not name or name == "" then return '<span class="state" id="state"></span>' end
+  return '<span class="repo">' .. (repo and "🔗 " or "📁 ") .. esc(name) .. '</span><span class="state" id="state"></span>'
 end
 
 -- The bubble as a small web page: the counts and the pager on top, then the message, then what
