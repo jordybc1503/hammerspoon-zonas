@@ -757,7 +757,22 @@ local function create(req)
   mouseTap:start()
   local uc = hs.webview.usercontent.new("mascota")
   uc:setCallback(function(m) if type(m.body) == "table" then onMessage(m.body) end end)
+  -- A link opened in the terminal goes to your browser: in every frame, window.open hands the
+  -- address to Hammerspoon (the terminal opens a blank window and sets its address after).
+  uc:injectScript({ mainFrame = false, injectionTime = "documentStart", source = [[
+    window.open = function (url) {
+      const send = u => window.webkit.messageHandlers.mascota.postMessage({ action: "open", url: String(u) });
+      if (url) { send(url); return null; }
+      return { opener: null, close() {}, location: { set href(u) { send(u); } } };
+    };]] })
   pet.web = hs.webview.new({ x = dest.x - GAP - pet.bw - 12, y = dest.y, w = pet.bw + 12, h = pet.fixedH or pet.webH }, {}, uc)
+    -- No window of its own for anything: a page asking for one gets your browser instead.
+    :policyCallback(function(action, _, nav)
+      if action ~= "newWindow" then return true end
+      local url = type(nav) == "table" and type(nav.request) == "table" and nav.request.URL
+      if type(url) == "string" and url:match("^https?://") then hs.urlevent.openURL(url) end
+      return false
+    end)
     :windowStyle({ "borderless", "nonactivating" })
     :transparent(true)
     :allowTextEntry(false) -- it cannot take the keyboard from what you are typing until you click it
@@ -828,6 +843,8 @@ onMessage = function(m)
     placeBubble()
     -- The page has loaded: a message that came while it loaded missed the pager, so set it now.
     pet.web:evaluateJavaScript(string.format("pager(%d, %d)", pet.index, #pet.items))
+  elseif m.action == "open" then
+    if type(m.url) == "string" and m.url:match("^https?://") then hs.urlevent.openURL(m.url) end
   elseif m.action == "min" then
     -- Only the pet stays; a click on it brings the bubble back.
     pet.minimized = true
