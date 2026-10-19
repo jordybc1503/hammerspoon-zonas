@@ -426,12 +426,22 @@ local function windowOf(session)
   return w
 end
 
+-- A background session's name, which its terminal carries as its title ("◐ <name>"); its job
+-- folder keeps it, and it can change (Claude names a session after its first prompts).
+local function bgName(bg)
+  local file = os.getenv("HOME") .. "/.claude/jobs/" .. bg .. "/state.json"
+  local state = hs.fs.attributes(file) and hs.json.read(file)
+  return type(state) == "table" and type(state.name) == "string" and state.name ~= "" and state.name or nil
+end
+
 -- Background sessions (`claude agents`) all share the agent view's window: only a title that
--- carries the session's short id is that session.
+-- carries the session's short id or name is that session.
 local function shows(session, w)
   local entry = windows[session]
   if not (entry and w and w:id() == entry.id) then return false end
-  return not entry.bg or (w:title() or ""):find(entry.bg, 1, true) ~= nil
+  if not entry.bg then return true end
+  local title, name = w:title() or "", bgName(entry.bg)
+  return title:find(entry.bg, 1, true) ~= nil or (name and title:find(name, 1, true) ~= nil)
 end
 
 local FRONT = "return id of focused terminal of selected tab of front window"
@@ -444,10 +454,20 @@ end
 
 local function goTo(req)
   local entry = windows[req.session]
+  -- A background session: the terminal showing it (titled with its id or name), else the agent
+  -- view you already have open (titled "… claude agents"), else a new window attached to it.
   if req.bg then
+    local name = bgName(req.bg) or req.bg
     return ghostty(([[
 repeat with term in terminals
-  if name of term contains "%s" then
+  if name of term contains "%s" or name of term contains %s then
+    focus term
+    activate
+    return
+  end if
+end repeat
+repeat with term in terminals
+  if name of term ends with "claude agents" then
     focus term
     activate
     return
@@ -456,7 +476,7 @@ end repeat
 set cfg to new surface configuration
 set initial input of cfg to "claude attach %s" & return
 new window with configuration cfg
-activate]]):format(req.bg, req.bg))
+activate]]):format(req.bg, '"' .. name:gsub('[\\"]', "\\%0") .. '"', req.bg))
   end
   if entry and entry.term then return ghostty(('focus terminal id "%s"\nactivate'):format(entry.term)) end
   local w = windowOf(req.session)
