@@ -19,6 +19,12 @@ local TEMPLATES = {
   -- Floating zone 4: a 16:9 24" monitor (95 % of the height), at the bottom. A 16:9 29" does not fit: the Dell is 34 cm tall.
   { id = "centro34-lectura", name = { es = 'Centro 34" + lectura 24"', en = 'Center 34" + 24" reading' },
     root = CENTER34, floats = { { x = 0.2771, y = 0.05, w = 0.4459, h = 0.95, key = "4" } } },
+  -- Thirds with the left one split in two, and floating zone 5 over the others: 1728 × 1026, the
+  -- width of a 16" MacBook Pro's screen, on a 3440 × 1410 ultrawide, centered and down at the bottom.
+  { id = "tercios-16", name = { es = 'Tercios + 16" al centro', en = 'Thirds + 16" in the middle' },
+    root = split("h", { 1 / 3, 1 / 3, 1 / 3 }, {
+      split("v", { 0.45, 0.55 }, { leaf("1"), leaf("4") }), leaf("2"), leaf("3") }),
+    floats = { { x = 0.2488, y = 0.2723, w = 0.5023, h = 0.7277, key = "5" } } },
   { id = "mitades", name = { es = "Mitades", en = "Halves" },
     root = split("h", { 1 / 2, 1 / 2 }, { leaf("1"), leaf("2") }) },
   { id = "tercios", name = { es = "Tercios", en = "Thirds" },
