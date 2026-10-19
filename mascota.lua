@@ -237,6 +237,8 @@ html, body { margin: 0; background: transparent; overflow: hidden;
 .top { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; min-height: 18px; }
 .counts { display: flex; gap: 10px; font: 600 12px -apple-system, system-ui, sans-serif; }
 .counts span { display: inline-flex; align-items: center; gap: 3px; }
+.repo { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: 600 12px Menlo, monospace; color: #c9d1dc; }
 .counts .work { color: #6f9dff; } .counts .wait { color: #f0a24a; } .counts .idle { color: #4fbf6f; }
 .nav { margin-left: auto; display: flex; align-items: center; gap: 2px; font-size: 11px; color: #9aa5b5; }
 .nav button { background: none; color: #c9d1dc; padding: 0 6px; font-size: 15px; line-height: 18px; }
@@ -330,6 +332,15 @@ local function statusHTML(req)
   return '<div class="sl"><div>' .. first .. "</div><div>" .. second .. "</div></div>"
 end
 
+-- The session's repository (named as its status line names it), else its folder: the top bar
+-- says at a glance whose message this is.
+local function placeHTML(req)
+  local repo = type(req.status) == "table" and type(req.status.repo) == "string" and req.status.repo
+  local name = repo or req.label
+  if not name or name == "" then return "" end
+  return '<span class="repo">' .. (repo and "🔗 " or "📁 ") .. esc(name) .. "</span>"
+end
+
 -- The bubble as a small web page: the counts and the pager on top, then the message, then what
 -- you can do about it, and at the foot the status line with the way to the terminal.
 local function bubbleHTML(req, index, total)
@@ -361,7 +372,8 @@ local function bubbleHTML(req, index, total)
   local data = string.format("const Q = %s; const WORDS = %s;", q and hs.json.encode(q) or "null", words())
   return "<!doctype html><html><head><meta charset=\"utf-8\"><style>" .. CSS .. "</style></head>"
     .. (pet and pet.fixedH and '<body class="fixed">' or "<body>")
-    .. '<div class="b"><div class="grip"></div><div class="top"><div class="counts" id="counts"></div><div class="nav" id="nav"></div></div>'
+    .. '<div class="b"><div class="grip"></div><div class="top"><div class="counts" id="counts"></div>' .. placeHTML(req)
+    .. '<div class="nav" id="nav"></div></div>'
     .. "<h1>" .. esc(title) .. "</h1>"
     .. (status and "" or ('<div class="where">' .. esc(where) .. "</div>"))
     .. (detail and detail ~= "" and ('<div class="detail' .. (req.kind == "done" and " answer" or "") .. '">'
@@ -392,12 +404,12 @@ local function terminalFor(req)
   return pet.tty.url
 end
 
--- The bubble around the terminal: counts, Go to terminal and the pager on top, the terminal
+-- The bubble around the terminal: counts, repository, Go to terminal and the pager on top, the terminal
 -- below. The page waits for ttyd to listen before loading it.
-local function terminalHTML(url, index, total)
+local function terminalHTML(url, req, index, total)
   local data = string.format("const Q = null; const WORDS = %s;", words())
   return "<!doctype html><html><head><meta charset=\"utf-8\"><style>" .. CSS .. "</style></head>"
-    .. '<body class="fixed"><div class="b"><div class="grip"></div><div class="top"><div class="counts" id="counts"></div>'
+    .. '<body class="fixed"><div class="b"><div class="grip"></div><div class="top"><div class="counts" id="counts"></div>' .. placeHTML(req)
     .. '<button class="link" data-a="go">' .. esc(t("go")) .. '</button><div class="nav" id="nav"></div></div>'
     .. '<div class="tty"><iframe id="tty"></iframe></div></div><script>' .. data:gsub("</", "<\\/") .. JS
     .. string.format("pager(%d, %d); ", index, total) .. countsJS()
@@ -417,7 +429,7 @@ local function page(req, index, total)
   end
   if req.wait then answer(req, "terminal"); req.wait = false end
   if not pet.fixedH then pet.fixedH, pet.bw = 460, math.max(pet.bw, 620) end
-  return terminalHTML(url, index, total)
+  return terminalHTML(url, req, index, total)
 end
 
 -- Placing and moving -----------------------------------------------------------------------
