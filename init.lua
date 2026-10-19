@@ -136,6 +136,7 @@ end
 
 zonas.start({ translate = translateSelection })
 require("mascota").start()
+require("escritorios").start()
 
 hs.autoLaunch(true)
 hs.alert.show(zonas.t("ready"), 2)

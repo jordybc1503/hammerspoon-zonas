@@ -49,6 +49,9 @@ local STR = {
     ready = "Atajos listos · menú ▦ arriba", notInDict = "No está en el diccionario.",
     noSel = "Sin selección", noSelBody = "Selecciona una palabra y vuelve a pulsar %s.",
     floating = "Zona flotante", pet = "%s: avisos de Claude Code", petDefault = "Mascota",
+    deskDefault = "Escritorio %d", deskPrompt = "Nombre de este escritorio",
+    deskRename = "Clic o ⌃⌥N para renombrar este escritorio", deskCancel = "Cancelar",
+    deskMenu = "Renombrar este escritorio (%s)…", deskShow = "Mostrar el escritorio en la barra",
   },
   en = {
     layout = "%s · %s", zone = "Zone %d", full = "Full screen",
@@ -60,6 +63,9 @@ local STR = {
     ready = "Shortcuts ready · ▦ menu at the top", notInDict = "Not in the dictionary.",
     noSel = "Nothing selected", noSelBody = "Select a word and press %s again.",
     floating = "Floating zone", pet = "%s: Claude Code alerts", petDefault = "Pet",
+    deskDefault = "Desktop %d", deskPrompt = "Name for this desktop",
+    deskRename = "Click or ⌃⌥N to rename this desktop", deskCancel = "Cancel",
+    deskMenu = "Rename this desktop (%s)…", deskShow = "Show the desktop in the menu bar",
   },
 }
 
@@ -439,7 +445,7 @@ end
 -- It replaces the Hammerspoon icon, so it carries its options too.
 -- The zones listed are those of the focused window's screen, the window that will move.
 local function menuItems()
-  local k, pet = saved.keys, require("mascota")
+  local k, pet, desk = saved.keys, require("mascota"), require("escritorios")
   local win = hs.window.focusedWindow()
   local screen = win and win:screen() or hs.screen.mainScreen()
   local items = { { title = M.t("layout", screen:name(), nameOf(layoutFor(screen))), disabled = true } }
@@ -468,6 +474,8 @@ local function menuItems()
     { title = "-" },
     { title = M.translateCombo() .. "     " .. M.t("translate"), disabled = true },
     { title = M.t("pet", pet.name() or M.t("petDefault")), checked = pet.enabled(), fn = pet.toggle },
+    { title = M.t("deskMenu", desk.name()), fn = desk.rename },
+    { title = M.t("deskShow"), checked = desk.shown(), fn = desk.toggle },
     { title = "-" },
     { title = M.t("guide"), fn = function() hs.urlevent.openURL("https://github.com/jordybc1503/hammerspoon-zonas#readme") end },
     { title = M.t("reload"), fn = hs.reload },
