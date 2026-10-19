@@ -16,13 +16,13 @@
       "alt"
     ]
   },
-  "lang" : "auto",
   "layouts" : [
     {
       "id" : "d1792402442692",
       "floats" : [
 
       ],
+      "name" : "Thirds (mine)",
       "root" : {
         "sizes" : [
           0.33333333333333331,
@@ -32,11 +32,11 @@
         "dir" : "h",
         "children" : [
           {
-            "dir" : "v",
             "sizes" : [
               0.45000000000000001,
               0.55000000000000004
             ],
+            "dir" : "v",
             "children" : [
               {
                 "key" : "1"
@@ -53,16 +53,16 @@
             "key" : "3"
           }
         ]
-      },
-      "name" : "Thirds (mine)"
+      }
     }
   ],
+  "lang" : "auto",
   "pet" : {
     "run" : true,
     "id" : "",
     "enabled" : true,
-    "look" : true,
     "size" : "m",
+    "look" : true,
     "events" : {
       "needs" : true,
       "question" : true,
@@ -70,7 +70,7 @@
     }
   },
   "screens" : {
-    "LG ULTRAWIDE" : "d1792402442692"
+    "LG ULTRAWIDE" : "tercios-16"
   },
   "gap" : 0
 }
