@@ -29,6 +29,8 @@ A pet runs to the terminal window whose Claude Code session **finished**, **has 
   prompt from the pop-up; in auto mode it only points you to a real prompt.
 - Turn it on or off, pick the pet, the events, its size and how it moves in the editor's
   **Pet** tab, or from the ▦ menu.
+- Drag it somewhere and the next pets on that screen come there instead of to their window.
+- ▦ › **Pet mode** › **Focus** keeps it still: it only moves when a new message comes.
 
 It has two halves: `mascota.lua` here draws the pet, and a Claude Code plugin tells it what
 happens. Install the plugin once, at the prompt of a Claude Code session:

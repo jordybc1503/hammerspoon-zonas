@@ -40,7 +40,8 @@ local DEFAULTS = {
   keys = { mods = { "ctrl", "alt" }, full = "return", drag = "shift", merge = "ctrl",
     translate = { mods = { "cmd", "alt" }, key = "t" } },
   -- The Claude Code pet (mascota.lua). id "" is the first Codex pet found, "drawn" the stand-in.
-  pet = { enabled = true, id = "", size = "m", look = true, run = true,
+  -- mode: "normal", or "focus" (still but for a new message's animation).
+  pet = { enabled = true, id = "", size = "m", look = true, run = true, mode = "normal",
     events = { done = true, question = true, needs = true } },
 }
 
@@ -55,6 +56,7 @@ local STR = {
     ready = "Atajos listos · menú ▦ arriba", notInDict = "No está en el diccionario.",
     noSel = "Sin selección", noSelBody = "Selecciona una palabra y vuelve a pulsar %s.",
     floating = "Zona flotante", pet = "%s: avisos de Claude Code", petDefault = "Mascota",
+    petMode = "Modo de la mascota", normal = "Normal", focus = "Concentración: quieta salvo con un mensaje nuevo",
     deskDefault = "Escritorio %d", deskPrompt = "Nombre de este escritorio",
     deskRename = "Clic o ⌃⌥N para renombrar este escritorio", deskCancel = "Cancelar",
     deskMenu = "Renombrar este escritorio (%s)…", deskShow = "Mostrar el escritorio en la barra",
@@ -69,6 +71,7 @@ local STR = {
     ready = "Shortcuts ready · ▦ menu at the top", notInDict = "Not in the dictionary.",
     noSel = "Nothing selected", noSelBody = "Select a word and press %s again.",
     floating = "Floating zone", pet = "%s: Claude Code alerts", petDefault = "Pet",
+    petMode = "Pet mode", normal = "Normal", focus = "Focus: still unless a new message comes",
     deskDefault = "Desktop %d", deskPrompt = "Name for this desktop",
     deskRename = "Click or ⌃⌥N to rename this desktop", deskCancel = "Cancel",
     deskMenu = "Rename this desktop (%s)…", deskShow = "Show the desktop in the menu bar",
@@ -161,7 +164,7 @@ local function valid(d)
   end
   local p = d.pet
   if type(p) ~= "table" or type(p.id) ~= "string" or not ({ s = true, m = true, l = true })[p.size]
-    or type(p.events) ~= "table" then return false end
+    or not ({ normal = true, focus = true })[p.mode] or type(p.events) ~= "table" then return false end
   for _, v in ipairs({ p.enabled, p.look, p.run, p.events.done, p.events.question, p.events.needs }) do
     if type(v) ~= "boolean" then return false end
   end
@@ -470,6 +473,11 @@ local function menuItems()
     end
     perScreen[#perScreen + 1] = { title = s:name() .. " · " .. nameOf(current), menu = choices }
   end
+  local modes = {}
+  for _, mode in ipairs({ "normal", "focus" }) do
+    modes[#modes + 1] = { title = M.t(mode), checked = saved.pet.mode == mode,
+      fn = function() saved.pet.mode = mode; save() end }
+  end
   for _, item in ipairs({
     { title = (k.full ~= "" and combo(k.mods, k.full) or "—") .. "     " .. M.t("full"), fn = function() moveTo(FULL) end },
     { title = M.t("drag", MOD[k.drag]), disabled = true },
@@ -480,6 +488,7 @@ local function menuItems()
     { title = "-" },
     { title = M.translateCombo() .. "     " .. M.t("translate"), disabled = true },
     { title = M.t("pet", pet.name() or M.t("petDefault")), checked = pet.enabled(), fn = pet.toggle },
+    { title = M.t("petMode"), menu = modes },
     { title = M.t("deskMenu", desk.name()), fn = desk.rename },
     { title = M.t("deskShow"), checked = desk.shown(), fn = desk.toggle },
     { title = "-" },

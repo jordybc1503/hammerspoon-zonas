@@ -158,14 +158,17 @@ end
 
 -- One step of the pet's life: it plays its mood once, then breathes (idle) and plays it again now
 -- and then; while you move the mouse it turns to look at it. Nothing while it runs or is dragged.
+-- In focus mode it plays a message's mood once and then holds still, without looking at the mouse.
 local function animate()
   if pet.running and not (pet.runTimer and pet.runTimer:running()) then pet.running = false end
   if not sheet or pet.running or drag then return end
   local now = hs.timer.secondsSinceEpoch()
-  local mouse = pet.look and hs.mouse.absolutePosition()
+  local focus = settings().mode == "focus"
+  local mouse = pet.look and not focus and hs.mouse.absolutePosition()
   if mouse and pet.mouse and math.abs(mouse.x - pet.mouse.x) + math.abs(mouse.y - pet.mouse.y) > 2 then pet.movedAt = now end
   pet.mouse = mouse
-  if pet.look and not pet.once and pet.movedAt and now - pet.movedAt < 1.2 then
+  if focus and pet.mood == "idle" then return draw(frame("idle", 0)) end
+  if mouse and not pet.once and pet.movedAt and now - pet.movedAt < 1.2 then
     local f = pet.canvas:frame()
     draw(look(math.atan(mouse.x - (f.x + f.w / 2), (f.y + f.h / 3) - mouse.y)))
     return
