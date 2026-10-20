@@ -20,6 +20,7 @@ for _, path in ipairs({ os.getenv("HOME") .. "/.local/bin/claude", "/opt/homebre
 end
 local BUBBLE = "mascota.bubble" -- { w, h } you gave the bubble by dragging its top-left corner
 local GAP = 10 -- between the bubble and the pet
+local SPOT = "mascota.spot" -- { [screen uuid] = { x, y } } where you last dropped the pet, from the screen's top-left
 
 -- The pet is a Codex pet (~/.codex/pets/<id>): an 8 × 11 sheet of 192 × 208 frames, one animation
 -- per row. Without one, a small drawn creature stands in.
@@ -561,11 +562,14 @@ activate]]):format(req.bg, '"' .. name:gsub('[\\"]', "\\%0") .. '"', req.bg))
   if w then w:focus() else hs.application.launchOrFocusByBundleID("com.mitchellh.ghostty") end
 end
 
--- Where the pet stands for a message: the bottom-right corner inside its session's window.
+-- Where the pet stands for a message: where you last dropped it on that screen, else the
+-- bottom-right corner inside its session's window.
 local function spotFor(req)
   local w = windowOf(req.session)
-  local area = w and w:frame() or hs.screen.mainScreen():frame()
-  local s = (w and w:screen() or hs.screen.mainScreen()):frame()
+  local screen = w and w:screen() or hs.screen.mainScreen()
+  local area, s = w and w:frame() or screen:frame(), screen:frame()
+  local mine = (hs.settings.get(SPOT) or {})[screen:getUUID()]
+  if mine then area = { x = s.x + mine.x, y = s.y + mine.y, w = pet.size.w + 16, h = pet.size.h + 16 } end
   local x = math.max(s.x + pet.bw + GAP, math.min(area.x + area.w - pet.size.w - 16, s.x + s.w - pet.size.w))
   local y = math.max(s.y, math.min(area.y + area.h - pet.size.h - 16, s.y + s.h - pet.size.h))
   return { x = x, y = y }, s
@@ -904,6 +908,11 @@ local function onMouse(e)
     drag = nil
     if moved then
       pet.dragged = true
+      -- Remembered for this screen: the next pets come here instead of to their window.
+      local screen, at = hs.mouse.getCurrentScreen(), pet.canvas:topLeft()
+      local spots = hs.settings.get(SPOT) or {}
+      spots[screen:getUUID()] = { x = at.x - screen:frame().x, y = at.y - screen:frame().y }
+      hs.settings.set(SPOT, spots)
       if pet.web and not pet.minimized then placeBubble(); pet.web:show() end
     elseif pet.minimized and pet.web then
       pet.minimized = false
