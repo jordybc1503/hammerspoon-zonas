@@ -43,13 +43,13 @@ local STR = {
     other = "Otra respuesta…", working = "trabajando", waiting = "te esperan", idle = "terminadas", close = "Cerrar",
     sWorking = "trabajando", sWaiting = "te espera", sIdle = "terminada",
     prev = "Mensaje anterior", next = "Mensaje siguiente", state = "Qué hace esta sesión ahora",
-    minimize = "Minimizar (clic en la mascota para abrir)" },
+    minimize = "Minimizar (clic en la mascota para abrir)", editor = "Abrir en %s ↗", editorDefault = "el editor" },
   en = { done = "Done!", question = "I have a question", needs = "I need you in the terminal", ask = "May I use %s?",
     allow = "Approve", deny = "Deny", go = "Go to terminal →", reply = "Reply to Claude…", send = "Send",
     other = "Another answer…", working = "working", waiting = "waiting for you", idle = "done", close = "Close",
     sWorking = "working", sWaiting = "needs input", sIdle = "done",
     prev = "Previous message", next = "Next message", state = "What this session is doing now",
-    minimize = "Minimize (click the pet to open)" },
+    minimize = "Minimize (click the pet to open)", editor = "Open in %s ↗", editorDefault = "the editor" },
 }
 local function t(k) return (STR[require("zonas").lang()] or STR.en)[k] end
 -- The pet's settings live with the zones (zonas.json), edited in the ▦ editor's Pet tab.
@@ -302,6 +302,9 @@ body.fixed .detail { flex: 1; max-height: none; overflow-y: auto; }
 .tty { flex: 1; min-height: 0; overflow: hidden; border-radius: 6px; background: #12161d; }
 .tty iframe { width: calc(100% + 15px); height: 100%; border: 0; }
 .top .link { padding: 0 4px; font-size: 12px; }
+.path { display: flex; align-items: center; gap: 8px; margin: -2px 0 6px; font: 11px Menlo, monospace; color: #9aa5b5; }
+.path span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.path .link { flex: none; padding: 0 4px; font-size: 12px; }
 .detail { font: 12px/1.35 Menlo, monospace; color: #dcdcdc; max-height: 4.1em; overflow: hidden;
   margin-bottom: 8px; word-break: break-word; }
 .answer { font: 13px/1.45 -apple-system, system-ui, sans-serif; max-height: 15em; overflow-y: auto;
@@ -414,6 +417,27 @@ local function placeHTML(req)
     .. '</span><span class="state" id="state"></span>'
 end
 
+-- Your code editor: the app macOS opens a .json file with (its pick for source code as such is
+-- usually TextEdit). Asked once, in the background; until then, or with none, Finder opens it.
+local editor
+local editorTask = hs.task.new("/usr/bin/osascript", function(_, out)
+  local id = out and out:match("^%s*([%w%.%-]+)%s*$")
+  if id then editor = { id = id, name = hs.application.nameForBundleID(id) or id } end
+end, { "-l", "JavaScript", "-e", 'ObjC.import("CoreServices"); '
+  .. 'ObjC.castRefToObject($.LSCopyDefaultRoleHandlerForContentType($("public.json"), $.kLSRolesAll)).js' })
+editorTask:start()
+
+-- The session's folder under the top bar, with the way to open it in your code editor. Older
+-- plugins send no folder: no line then.
+local function pathHTML(req)
+  if type(req.cwd) ~= "string" or req.cwd == "" then return "" end
+  local home = os.getenv("HOME")
+  local short = (req.cwd == home or req.cwd:sub(1, #home + 1) == home .. "/") and "~" .. req.cwd:sub(#home + 1) or req.cwd
+  return '<div class="path"><span data-tip="' .. esc(req.cwd) .. '">📂 ' .. esc(short) .. '</span>'
+    .. '<button class="link" data-a="editor">' .. esc(string.format(t("editor"), editor and editor.name or t("editorDefault")))
+    .. "</button></div>"
+end
+
 -- The bubble as a small web page: the counts and the pager on top, then the message, then what
 -- you can do about it, and at the foot the status line with the way to the terminal.
 local function bubbleHTML(req, index, total)
@@ -446,7 +470,7 @@ local function bubbleHTML(req, index, total)
   return "<!doctype html><html><head><meta charset=\"utf-8\"><style>" .. CSS .. "</style></head>"
     .. (pet and pet.fixedH and '<body class="fixed">' or "<body>")
     .. '<div class="b"><div class="grip"></div><div class="top"><div class="counts" id="counts"></div>' .. placeHTML(req)
-    .. '<div class="nav" id="nav"></div></div>'
+    .. '<div class="nav" id="nav"></div></div>' .. pathHTML(req)
     .. "<h1>" .. esc(title) .. "</h1>"
     .. (status and "" or ('<div class="where">' .. esc(where) .. "</div>"))
     .. (detail and detail ~= "" and ('<div class="detail' .. (req.kind == "done" and " answer" or "") .. '">'
@@ -483,7 +507,7 @@ local function terminalHTML(url, req, index, total)
   local data = string.format("const Q = null; const WORDS = %s;", words())
   return "<!doctype html><html><head><meta charset=\"utf-8\"><style>" .. CSS .. "</style></head>"
     .. '<body class="fixed"><div class="b"><div class="grip"></div><div class="top"><div class="counts" id="counts"></div>' .. placeHTML(req)
-    .. '<button class="link" data-a="go">' .. esc(t("go")) .. '</button><div class="nav" id="nav"></div></div>'
+    .. '<button class="link" data-a="go">' .. esc(t("go")) .. '</button><div class="nav" id="nav"></div></div>' .. pathHTML(req)
     .. '<div class="tty"><iframe id="tty"></iframe></div></div><div id="tip"></div><script>' .. data:gsub("</", "<\\/") .. JS
     .. string.format("pager(%d, %d); ", index, total) .. countsJS()
     .. string.format([[(function load(n) {
@@ -871,6 +895,10 @@ onMessage = function(m)
     local back = pet.back
     removeAt(pet.index, "reply")
     if back then back:focus() end
+  elseif m.action == "editor" then
+    if type(req.cwd) == "string" then
+      hs.task.new("/usr/bin/open", nil, editor and { "-b", editor.id, req.cwd } or { req.cwd }):start()
+    end
   elseif m.action == "close" then
     removeAt(pet.index, "terminal")
   else

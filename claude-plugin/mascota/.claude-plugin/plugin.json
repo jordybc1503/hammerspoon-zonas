@@ -1,6 +1,6 @@
 {
   "name": "mascota",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "Your Codex pet (drawn by Hammerspoon) runs to the terminal window whose Claude session finished or needs you, with Approve / Deny buttons where an ask is real.",
   "author": { "name": "jordybc1503" }
 }
