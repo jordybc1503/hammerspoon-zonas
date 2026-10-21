@@ -49,13 +49,15 @@ async function send($: EngineInterface, kind: string, fields: object, wait = fal
   const id = `${session}-${++count}`;
   const cwd = await $.session.cwd(); // the bubble opens it in your code editor
   label ??= cwd.split("/").pop() ?? "";
+  // Claude's own id for the session (it changes on /clear): the bubble resumes it once it ended.
+  const claude = await $.session.id().catch(() => undefined);
   if (bg === undefined) {
     const job = (await $.env.get("CLAUDE_CODE_SESSION_KIND")) === "bg" && (await $.env.get("CLAUDE_JOB_DIR"));
     bg = job ? (job.split("/").pop() ?? null) : null;
   }
   // Only a message the bubble shows carries it: bind, working and end never reach the bubble.
   const status = ["done", "question", "ask", "needs"].includes(kind) ? await statusLine($).catch(() => undefined) : undefined;
-  const request = JSON.stringify({ kind, session, id, label, cwd, wait, status, ...(bg ? { bg } : {}), ...fields });
+  const request = JSON.stringify({ kind, session, id, label, cwd, claude, wait, status, ...(bg ? { bg } : {}), ...fields });
   const run = await $.process.run(["/bin/sh", "-c", SCRIPT, "mascota", id, request, wait ? "1" : "0"], {
     timeoutMs: 600_000,
   });

@@ -21,6 +21,7 @@ end
 local BUBBLE = "mascota.bubble" -- { w, h } you gave the bubble by dragging its top-left corner
 local GAP = 10 -- between the bubble and the pet
 local SPOT = "mascota.spot" -- { [screen uuid] = { x, y } } where you last dropped the pet, from the screen's top-left
+local RECENT = "mascota.recent" -- your last 10 sessions, newest first: { claude, session, name, cwd, bg, at }
 
 -- The pet is a Codex pet (~/.codex/pets/<id>): an 8 × 11 sheet of 192 × 208 frames, one animation
 -- per row. Without one, a small drawn creature stands in.
@@ -43,12 +44,14 @@ local STR = {
     other = "Otra respuesta…", working = "trabajando", waiting = "te esperan", idle = "terminadas", close = "Cerrar",
     sWorking = "trabajando", sWaiting = "te espera", sIdle = "terminada",
     prev = "Mensaje anterior", next = "Mensaje siguiente", state = "Qué hace esta sesión ahora", inBubble = "💬 Burbuja", inTerminal = "Terminal ↗",
+    recent = "recientes", resume = "Retomar ↗",
     minimize = "Minimizar (clic en la mascota para abrir)", editor = "Abrir en %s ↗", editorDefault = "el editor" },
   en = { done = "Done!", question = "I have a question", needs = "I need you in the terminal", ask = "May I use %s?",
     allow = "Approve", deny = "Deny", go = "Go to terminal →", reply = "Reply to Claude…", send = "Send",
     other = "Another answer…", working = "working", waiting = "waiting for you", idle = "done", close = "Close",
     sWorking = "working", sWaiting = "needs input", sIdle = "done",
     prev = "Previous message", next = "Next message", state = "What this session is doing now", inBubble = "💬 Bubble", inTerminal = "Terminal ↗",
+    recent = "recent", resume = "Resume ↗",
     minimize = "Minimize (click the pet to open)", editor = "Open in %s ↗", editorDefault = "the editor" },
 }
 local function t(k) return (STR[require("zonas").lang()] or STR.en)[k] end
@@ -206,8 +209,28 @@ local function bgName(bg)
   return type(state) == "table" and type(state.name) == "string" and state.name ~= "" and state.name or nil
 end
 
+-- Every request puts its session first among the recent ones, by Claude's own id for it (the one
+-- `claude --resume` takes; a plugin reload gives the same session a new id of ours).
+local function remember(req)
+  if type(req.claude) ~= "string" or not req.claude:match("^[%w%-]+$") then return end
+  local list, old = hs.settings.get(RECENT) or {}, {}
+  for i = #list, 1, -1 do
+    if list[i].claude == req.claude then old = table.remove(list, i) end
+  end
+  local repo = type(req.status) == "table" and type(req.status.repo) == "string" and req.status.repo
+  table.insert(list, 1, { claude = req.claude, session = req.session, at = os.time(), bg = req.bg or old.bg,
+    name = repo or old.name or req.label or "?", cwd = type(req.cwd) == "string" and req.cwd or old.cwd })
+  while #list > 10 do table.remove(list) end
+  hs.settings.set(RECENT, list)
+end
+
+local function ago(s)
+  s = math.floor(s)
+  return s < 3600 and math.max(1, s // 60) .. " min" or s < 86400 and s // 3600 .. " h" or s // 86400 .. " d" end
+
 -- How many sessions are working, waiting for you and done, and each one ({ name, session }) for
--- the hints. A session silent for 3 hours is gone (closed without telling us).
+-- the hints, then the recent ones, newest first, open (`live`) or ended. A session silent for 3
+-- hours is gone (closed without telling us).
 local function counts()
   local by, now = { working = {}, waiting = {}, idle = {} }, os.time()
   for session, st in pairs(status) do
@@ -218,6 +241,15 @@ local function counts()
     end
   end
   for _, list in pairs(by) do table.sort(list, function(a, b) return a.name < b.name end) end
+  -- Only a session's newest conversation is open: one before its /clear can be resumed.
+  by.recent = {}
+  local seen = {}
+  for _, r in ipairs(hs.settings.get(RECENT) or {}) do
+    local name = r.bg and bgName(r.bg)
+    table.insert(by.recent, { name = r.name .. (name and (" · " .. name) or ""), session = r.session, claude = r.claude,
+      live = status[r.session] ~= nil and not seen[r.session], ago = ago(now - r.at) })
+    seen[r.session] = true
+  end
   return #by.working, #by.waiting, #by.idle, by
 end
 
@@ -236,7 +268,8 @@ end
 local function words()
   return hs.json.encode({ working = t("working"), waiting = t("waiting"), idle = t("idle"), close = t("close"),
     minimize = t("minimize"), sWorking = t("sWorking"), sWaiting = t("sWaiting"), sIdle = t("sIdle"),
-    prev = t("prev"), next = t("next"), state = t("state"), inBubble = t("inBubble"), inTerminal = t("inTerminal") })
+    prev = t("prev"), next = t("next"), state = t("state"), inBubble = t("inBubble"), inTerminal = t("inTerminal"),
+    recent = t("recent"), resume = t("resume") })
 end
 
 local shownCounts
@@ -291,6 +324,7 @@ html, body { margin: 0; background: transparent; overflow: hidden;
 .state.wait { color: #f0a24a; background: rgba(240, 162, 74, .15); }
 .state.idle { color: #4fbf6f; background: rgba(79, 191, 111, .15); }
 .counts .work { color: #6f9dff; } .counts .wait { color: #f0a24a; } .counts .idle { color: #4fbf6f; }
+.counts .recent { color: #9aa5b5; }
 .nav { margin-left: auto; display: flex; align-items: center; gap: 2px; font-size: 11px; color: #9aa5b5; }
 .nav button { background: none; color: #c9d1dc; padding: 0 6px; font-size: 15px; line-height: 18px; }
 .nav button:hover { color: #fff; }
@@ -352,7 +386,8 @@ function counts(by) {
     return `<span class="${cls}" data-tip="${esc(tip)}" data-list="${esc(JSON.stringify(list))}">${icon} ${n}</span>`;
   };
   document.getElementById("counts").innerHTML =
-    c(by.working, "work", "⚙️", WORDS.working) + c(by.waiting, "wait", "✋", WORDS.waiting) + c(by.idle, "idle", "✓", WORDS.idle);
+    c(by.working, "work", "⚙️", WORDS.working) + c(by.waiting, "wait", "✋", WORDS.waiting) + c(by.idle, "idle", "✓", WORDS.idle)
+    + c(by.recent, "recent", "🕘", WORDS.recent);
   size();
 }
 // The hint under what the pointer is on; Hammerspoon says where the pointer is (-1 when it left).
@@ -371,16 +406,18 @@ function hover(x, y) {
       const b = document.createElement("button");
       b.className = "go";
       b.textContent = label;
-      b.onclick = () => post({ action: "session", session: s.session, where });
+      b.onclick = () => post({ action: "session", session: s.session, claude: s.claude, where });
       return b;
     };
+    // A recent session that ended can only be resumed.
     tip.replaceChildren(el.dataset.tip, ...list.map(s => {
       const row = document.createElement("div"), name = document.createElement("span"), sep = document.createElement("span");
       row.className = "s";
-      name.textContent = "• " + s.name;
+      name.textContent = "• " + s.name + (s.ago ? " · " + s.ago : "");
       sep.className = "sep";
       sep.textContent = "|";
-      row.append(name, go(s, "bubble", WORDS.inBubble), sep, go(s, "terminal", WORDS.inTerminal));
+      if (s.live === false) row.append(name, go(s, "resume", WORDS.resume));
+      else row.append(name, go(s, "bubble", WORDS.inBubble), sep, go(s, "terminal", WORDS.inTerminal));
       return row;
     }));
   } else tip.textContent = el.dataset.tip;
@@ -606,6 +643,18 @@ local FRONT = "return id of focused terminal of selected tab of front window"
 local function ghostty(script, done)
   hs.task.new("/usr/bin/osascript", done and function(code, out) done(code == 0 and out or nil) end,
     { "-e", 'tell application "Ghostty"\n' .. script .. "\nend tell" }):start()
+end
+
+-- A recent session that ended opens again in a new Ghostty window: `claude --resume` in its folder.
+local function resume(claude)
+  for _, r in ipairs(hs.settings.get(RECENT) or {}) do
+    if r.claude == claude then
+      local cd = r.cwd and ("cd '" .. r.cwd:gsub("'", "'\\''") .. "' && ") or ""
+      local line = (cd .. "claude --resume " .. claude):gsub('[\\"]', "\\%0")
+      return ghostty('set cfg to new surface configuration\nset initial input of cfg to "' .. line
+        .. '" & return\nnew window with configuration cfg\nactivate')
+    end
+  end
 end
 
 local function goTo(req)
@@ -946,7 +995,8 @@ onMessage = function(m)
     removeAt(pet.index, "reply")
     if back then back:focus() end
   elseif m.action == "session" then
-    -- A session picked from a count's list, to open in the bubble or in its terminal.
+    -- A session picked from a count's list, to open in the bubble or in its terminal, or to resume.
+    if m.where == "resume" then return resume(m.claude) end
     local st = type(m.session) == "string" and status[m.session]
     if not st then return end
     if m.where ~= "bubble" then return goTo({ session = m.session, bg = st.bg }) end
@@ -1104,6 +1154,7 @@ function M.toggle()
 end
 
 local function handle(req)
+  remember(req)
   if req.kind == "end" then
     removeSession(req.session, "terminal")
     windows[req.session] = nil
