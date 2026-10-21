@@ -40,8 +40,9 @@ local DEFAULTS = {
   keys = { mods = { "ctrl", "alt" }, full = "return", drag = "shift", merge = "ctrl",
     translate = { mods = { "cmd", "alt" }, key = "t" } },
   -- The Claude Code pet (mascota.lua). id "" is the first Codex pet found, "drawn" the stand-in.
-  -- mode: "normal", or "focus" (still but for a new message's animation).
-  pet = { enabled = true, id = "", size = "m", look = true, run = true, mode = "normal",
+  -- mode: "normal", or "focus" (still but for a new message's animation). editor: the bundle id
+  -- of the app the bubble opens a session's folder in, "" for the one macOS opens .json files with.
+  pet = { enabled = true, id = "", size = "m", look = true, run = true, mode = "normal", editor = "",
     events = { done = true, question = true, needs = true } },
 }
 
@@ -57,6 +58,7 @@ local STR = {
     noSel = "Sin selección", noSelBody = "Selecciona una palabra y vuelve a pulsar %s.",
     floating = "Zona flotante", pet = "%s: avisos de Claude Code", petDefault = "Mascota",
     petMode = "Modo de la mascota", normal = "Normal", focus = "Concentración: quieta salvo con un mensaje nuevo",
+    petEditor = "Abrir carpetas de la mascota en", editorSystem = "El predeterminado del sistema (%s)",
     deskDefault = "Escritorio %d", deskPrompt = "Nombre de este escritorio",
     deskRename = "Clic o ⌃⌥N para renombrar este escritorio", deskCancel = "Cancelar",
     deskMenu = "Renombrar este escritorio (%s)…", deskShow = "Mostrar el escritorio en la barra",
@@ -72,6 +74,7 @@ local STR = {
     noSel = "Nothing selected", noSelBody = "Select a word and press %s again.",
     floating = "Floating zone", pet = "%s: Claude Code alerts", petDefault = "Pet",
     petMode = "Pet mode", normal = "Normal", focus = "Focus: still unless a new message comes",
+    petEditor = "Open the pet's folders in", editorSystem = "System default (%s)",
     deskDefault = "Desktop %d", deskPrompt = "Name for this desktop",
     deskRename = "Click or ⌃⌥N to rename this desktop", deskCancel = "Cancel",
     deskMenu = "Rename this desktop (%s)…", deskShow = "Show the desktop in the menu bar",
@@ -164,7 +167,7 @@ local function valid(d)
   end
   local p = d.pet
   if type(p) ~= "table" or type(p.id) ~= "string" or not ({ s = true, m = true, l = true })[p.size]
-    or not ({ normal = true, focus = true })[p.mode] or type(p.events) ~= "table" then return false end
+    or not ({ normal = true, focus = true })[p.mode] or type(p.editor) ~= "string" or type(p.events) ~= "table" then return false end
   for _, v in ipairs({ p.enabled, p.look, p.run, p.events.done, p.events.question, p.events.needs }) do
     if type(v) ~= "boolean" then return false end
   end
@@ -478,6 +481,13 @@ local function menuItems()
     modes[#modes + 1] = { title = M.t(mode), checked = saved.pet.mode == mode,
       fn = function() saved.pet.mode = mode; save() end }
   end
+  local systemName, installed = pet.editors()
+  local editors = { { title = M.t("editorSystem", systemName or "Finder"), checked = saved.pet.editor == "",
+    fn = function() saved.pet.editor = ""; save() end } }
+  for _, ed in ipairs(installed) do
+    editors[#editors + 1] = { title = ed.name, checked = saved.pet.editor == ed.id,
+      fn = function() saved.pet.editor = ed.id; save() end }
+  end
   for _, item in ipairs({
     { title = (k.full ~= "" and combo(k.mods, k.full) or "—") .. "     " .. M.t("full"), fn = function() moveTo(FULL) end },
     { title = M.t("drag", MOD[k.drag]), disabled = true },
@@ -489,6 +499,7 @@ local function menuItems()
     { title = M.translateCombo() .. "     " .. M.t("translate"), disabled = true },
     { title = M.t("pet", pet.name() or M.t("petDefault")), checked = pet.enabled(), fn = pet.toggle },
     { title = M.t("petMode"), menu = modes },
+    { title = M.t("petEditor"), menu = editors },
     { title = M.t("deskMenu", desk.name()), fn = desk.rename },
     { title = M.t("deskShow"), checked = desk.shown(), fn = desk.toggle },
     { title = "-" },

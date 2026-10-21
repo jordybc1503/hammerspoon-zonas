@@ -419,13 +419,30 @@ end
 
 -- Your code editor: the app macOS opens a .json file with (its pick for source code as such is
 -- usually TextEdit). Asked once, in the background; until then, or with none, Finder opens it.
-local editor
+-- An app is named as Finder names it ("Visual Studio Code", where its own name is "Code").
+local function app(id)
+  local path = hs.application.pathForBundleID(id) -- "" when it is not installed
+  if not path or path == "" then return nil end
+  return { id = id, name = path:match("([^/]+)%.app/?$") or hs.application.nameForBundleID(id) or id }
+end
+local systemEditor
 local editorTask = hs.task.new("/usr/bin/osascript", function(_, out)
   local id = out and out:match("^%s*([%w%.%-]+)%s*$")
-  if id then editor = { id = id, name = hs.application.nameForBundleID(id) or id } end
+  systemEditor = id and app(id)
 end, { "-l", "JavaScript", "-e", 'ObjC.import("CoreServices"); '
   .. 'ObjC.castRefToObject($.LSCopyDefaultRoleHandlerForContentType($("public.json"), $.kLSRolesAll)).js' })
 editorTask:start()
+
+-- The code editors the ▦ menu offers, those installed.
+local EDITORS = { "com.microsoft.VSCode", "com.todesktop.230313mzl4w4u92", "com.exafunction.windsurf", "dev.zed.Zed",
+  "com.sublimetext.4", "com.vscodium", "com.panic.Nova", "com.macromates.TextMate", "com.apple.dt.Xcode",
+  "com.jetbrains.intellij", "com.jetbrains.WebStorm", "com.jetbrains.pycharm" }
+
+-- The one you picked in the ▦ menu (pet.editor), else the system's.
+local function editorApp()
+  local id = settings().editor
+  return id ~= "" and app(id) or systemEditor
+end
 
 -- The session's folder under the top bar, with the way to open it in your code editor. Older
 -- plugins send no folder: no line then.
@@ -433,6 +450,7 @@ local function pathHTML(req)
   if type(req.cwd) ~= "string" or req.cwd == "" then return "" end
   local home = os.getenv("HOME")
   local short = (req.cwd == home or req.cwd:sub(1, #home + 1) == home .. "/") and "~" .. req.cwd:sub(#home + 1) or req.cwd
+  local editor = editorApp()
   return '<div class="path"><span data-tip="' .. esc(req.cwd) .. '">📂 ' .. esc(short) .. '</span>'
     .. '<button class="link" data-a="editor">' .. esc(string.format(t("editor"), editor and editor.name or t("editorDefault")))
     .. "</button></div>"
@@ -897,6 +915,7 @@ onMessage = function(m)
     if back then back:focus() end
   elseif m.action == "editor" then
     if type(req.cwd) == "string" then
+      local editor = editorApp()
       hs.task.new("/usr/bin/open", nil, editor and { "-b", editor.id, req.cwd } or { req.cwd }):start()
     end
   elseif m.action == "close" then
@@ -1011,6 +1030,13 @@ function M.enabled() return settings().enabled end
 function M.name()
   loadPet(settings().id)
   return petName
+end
+
+-- For the ▦ menu: the system's editor (its name, or nil) and the installed editors, { id, name }.
+function M.editors()
+  local list = {}
+  for _, id in ipairs(EDITORS) do list[#list + 1] = app(id) end
+  return systemEditor and systemEditor.name, list
 end
 
 function M.toggle()
