@@ -42,13 +42,13 @@ local STR = {
     allow = "Aprobar", deny = "Rechazar", go = "Ir a la terminal →", reply = "Responde a Claude…", send = "Enviar",
     other = "Otra respuesta…", working = "trabajando", waiting = "te esperan", idle = "terminadas", close = "Cerrar",
     sWorking = "trabajando", sWaiting = "te espera", sIdle = "terminada",
-    prev = "Mensaje anterior", next = "Mensaje siguiente", state = "Qué hace esta sesión ahora", pick = "clic para abrir una",
+    prev = "Mensaje anterior", next = "Mensaje siguiente", state = "Qué hace esta sesión ahora", inBubble = "💬 Burbuja", inTerminal = "Terminal ↗",
     minimize = "Minimizar (clic en la mascota para abrir)", editor = "Abrir en %s ↗", editorDefault = "el editor" },
   en = { done = "Done!", question = "I have a question", needs = "I need you in the terminal", ask = "May I use %s?",
     allow = "Approve", deny = "Deny", go = "Go to terminal →", reply = "Reply to Claude…", send = "Send",
     other = "Another answer…", working = "working", waiting = "waiting for you", idle = "done", close = "Close",
     sWorking = "working", sWaiting = "needs input", sIdle = "done",
-    prev = "Previous message", next = "Next message", state = "What this session is doing now", pick = "click one to open it",
+    prev = "Previous message", next = "Next message", state = "What this session is doing now", inBubble = "💬 Bubble", inTerminal = "Terminal ↗",
     minimize = "Minimize (click the pet to open)", editor = "Open in %s ↗", editorDefault = "the editor" },
 }
 local function t(k) return (STR[require("zonas").lang()] or STR.en)[k] end
@@ -236,7 +236,7 @@ end
 local function words()
   return hs.json.encode({ working = t("working"), waiting = t("waiting"), idle = t("idle"), close = t("close"),
     minimize = t("minimize"), sWorking = t("sWorking"), sWaiting = t("sWaiting"), sIdle = t("sIdle"),
-    prev = t("prev"), next = t("next"), state = t("state"), pick = t("pick") })
+    prev = t("prev"), next = t("next"), state = t("state"), inBubble = t("inBubble"), inTerminal = t("inTerminal") })
 end
 
 local shownCounts
@@ -250,11 +250,12 @@ local function refreshCounts()
   require("zonas").badge((working > 0 and ("  ⚙" .. working) or "") .. (waiting > 0 and ("  ✋" .. waiting) or ""))
 end
 
--- What a request says about its session, and where it comes from, for the hints.
+-- What a request says about its session, and where it comes from, for the hints; `last` is its
+-- last message the bubble showed, which a count's list opens again.
 local function setStatus(session, state, req)
   local old = status[session] or {}
   status[session] = state and { state = state, at = os.time(), label = req and req.label or old.label,
-    bg = req and req.bg or old.bg,
+    bg = req and req.bg or old.bg, last = req and MOOD[req.kind] and req or old.last,
     repo = req and type(req.status) == "table" and type(req.status.repo) == "string" and req.status.repo or old.repo } or nil
   refreshCounts()
 end
@@ -276,9 +277,12 @@ html, body { margin: 0; background: transparent; overflow: hidden;
 .repo { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font: 600 12px Menlo, monospace; color: #c9d1dc; }
 #tip.list { pointer-events: auto; white-space: normal; overflow-y: auto; }
-#tip .go { display: block; width: 100%; margin-top: 3px; padding: 3px 6px; background: none; color: #8fb0ff;
-  font: 500 12px -apple-system, system-ui, sans-serif; text-align: left; border-radius: 5px; }
+#tip .s { display: flex; align-items: center; gap: 4px; margin-top: 3px; }
+#tip .s span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 6px; }
+#tip .go { flex: none; padding: 2px 5px; background: none; color: #8fb0ff;
+  font: 500 12px -apple-system, system-ui, sans-serif; border-radius: 5px; }
 #tip .go:hover { background: #2c3442; }
+#tip .sep { color: #45506a; }
 #tip { position: fixed; z-index: 9; display: none; max-width: calc(100% - 24px); padding: 6px 9px;
   border-radius: 7px; background: #0d1015; border: 1px solid #45506a; color: #e8ebf0; pointer-events: none;
   font: 12px/1.45 -apple-system, system-ui, sans-serif; white-space: pre-line; box-shadow: 0 4px 14px rgba(0, 0, 0, .5); }
@@ -344,7 +348,7 @@ function counts(by) {
   const c = (list, cls, icon, word) => {
     const n = Array.isArray(list) ? list.length : 0;
     if (!n) return "";
-    const tip = `${icon} ${n} ${word} · ${WORDS.pick}`;
+    const tip = `${icon} ${n} ${word}`;
     return `<span class="${cls}" data-tip="${esc(tip)}" data-list="${esc(JSON.stringify(list))}">${icon} ${n}</span>`;
   };
   document.getElementById("counts").innerHTML =
@@ -352,8 +356,8 @@ function counts(by) {
   size();
 }
 // The hint under what the pointer is on; Hammerspoon says where the pointer is (-1 when it left).
-// A count's hint lists its sessions as buttons and stays while the pointer is on it; it overlaps
-// the count a little, so the pointer goes onto it without leaving both.
+// A count's hint lists its sessions, each to open in the bubble or in its terminal, and stays while
+// the pointer is on it; it overlaps the count a little, so the pointer goes onto it without leaving both.
 function hover(x, y) {
   const tip = document.getElementById("tip");
   const hit = x >= 0 && document.elementFromPoint(x, y);
@@ -363,12 +367,21 @@ function hover(x, y) {
   tip.classList.toggle("list", !!list);
   if (!el) { tip.style.display = "none"; return; }
   if (list) {
-    tip.replaceChildren(el.dataset.tip, ...list.map(s => {
+    const go = (s, where, label) => {
       const b = document.createElement("button");
       b.className = "go";
-      b.textContent = "• " + s.name;
-      b.onclick = () => post({ action: "session", session: s.session });
+      b.textContent = label;
+      b.onclick = () => post({ action: "session", session: s.session, where });
       return b;
+    };
+    tip.replaceChildren(el.dataset.tip, ...list.map(s => {
+      const row = document.createElement("div"), name = document.createElement("span"), sep = document.createElement("span");
+      row.className = "s";
+      name.textContent = "• " + s.name;
+      sep.className = "sep";
+      sep.textContent = "|";
+      row.append(name, go(s, "bubble", WORDS.inBubble), sep, go(s, "terminal", WORDS.inTerminal));
+      return row;
     }));
   } else tip.textContent = el.dataset.tip;
   tip.style.display = "block";
@@ -933,14 +946,26 @@ onMessage = function(m)
     removeAt(pet.index, "reply")
     if back then back:focus() end
   elseif m.action == "session" then
-    -- A session picked from a count's list: its message here when it has one, else its terminal.
+    -- A session picked from a count's list, to open in the bubble or in its terminal.
     local st = type(m.session) == "string" and status[m.session]
     if not st then return end
+    if m.where ~= "bubble" then return goTo({ session = m.session, bg = st.bg }) end
     for i, item in ipairs(pet.items) do
       if item.session == m.session then
         pet.index = i
         return render(false)
       end
+    end
+    -- Else its last message again, to read and reply to: an approval or a question it showed was
+    -- answered already, so it comes back as a plain "I need you in the terminal". A background
+    -- session with none still opens, as its terminal.
+    local again = st.last and hs.fnutils.copy(st.last) or st.bg and { kind = "done", label = st.label, bg = st.bg }
+    if again then
+      again.session, again.wait = m.session, false
+      if again.kind ~= "done" then again.kind = "needs" end
+      table.insert(pet.items, again)
+      pet.index = #pet.items
+      return render(false)
     end
     goTo({ session = m.session, bg = st.bg })
   elseif m.action == "editor" then
