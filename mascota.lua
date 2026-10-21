@@ -42,13 +42,13 @@ local STR = {
     allow = "Aprobar", deny = "Rechazar", go = "Ir a la terminal →", reply = "Responde a Claude…", send = "Enviar",
     other = "Otra respuesta…", working = "trabajando", waiting = "te esperan", idle = "terminadas", close = "Cerrar",
     sWorking = "trabajando", sWaiting = "te espera", sIdle = "terminada",
-    prev = "Mensaje anterior", next = "Mensaje siguiente", state = "Qué hace esta sesión ahora",
+    prev = "Mensaje anterior", next = "Mensaje siguiente", state = "Qué hace esta sesión ahora", pick = "clic para abrir una",
     minimize = "Minimizar (clic en la mascota para abrir)", editor = "Abrir en %s ↗", editorDefault = "el editor" },
   en = { done = "Done!", question = "I have a question", needs = "I need you in the terminal", ask = "May I use %s?",
     allow = "Approve", deny = "Deny", go = "Go to terminal →", reply = "Reply to Claude…", send = "Send",
     other = "Another answer…", working = "working", waiting = "waiting for you", idle = "done", close = "Close",
     sWorking = "working", sWaiting = "needs input", sIdle = "done",
-    prev = "Previous message", next = "Next message", state = "What this session is doing now",
+    prev = "Previous message", next = "Next message", state = "What this session is doing now", pick = "click one to open it",
     minimize = "Minimize (click the pet to open)", editor = "Open in %s ↗", editorDefault = "the editor" },
 }
 local function t(k) return (STR[require("zonas").lang()] or STR.en)[k] end
@@ -206,18 +206,18 @@ local function bgName(bg)
   return type(state) == "table" and type(state.name) == "string" and state.name ~= "" and state.name or nil
 end
 
--- How many sessions are working, waiting for you and done, and their names for the hints. A
--- session silent for 3 hours is gone (closed without telling us).
+-- How many sessions are working, waiting for you and done, and each one ({ name, session }) for
+-- the hints. A session silent for 3 hours is gone (closed without telling us).
 local function counts()
   local by, now = { working = {}, waiting = {}, idle = {} }, os.time()
   for session, st in pairs(status) do
     if now - st.at > 3 * 3600 then status[session], windows[session] = nil, nil
     elseif by[st.state] then
       local name = st.bg and bgName(st.bg)
-      table.insert(by[st.state], (st.repo or st.label or "?") .. (name and (" · " .. name) or ""))
+      table.insert(by[st.state], { name = (st.repo or st.label or "?") .. (name and (" · " .. name) or ""), session = session })
     end
   end
-  for _, names in pairs(by) do table.sort(names) end
+  for _, list in pairs(by) do table.sort(list, function(a, b) return a.name < b.name end) end
   return #by.working, #by.waiting, #by.idle, by
 end
 
@@ -236,7 +236,7 @@ end
 local function words()
   return hs.json.encode({ working = t("working"), waiting = t("waiting"), idle = t("idle"), close = t("close"),
     minimize = t("minimize"), sWorking = t("sWorking"), sWaiting = t("sWaiting"), sIdle = t("sIdle"),
-    prev = t("prev"), next = t("next"), state = t("state") })
+    prev = t("prev"), next = t("next"), state = t("state"), pick = t("pick") })
 end
 
 local shownCounts
@@ -275,6 +275,10 @@ html, body { margin: 0; background: transparent; overflow: hidden;
 .counts span { display: inline-flex; align-items: center; gap: 3px; }
 .repo { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font: 600 12px Menlo, monospace; color: #c9d1dc; }
+#tip.list { pointer-events: auto; white-space: normal; overflow-y: auto; }
+#tip .go { display: block; width: 100%; margin-top: 3px; padding: 3px 6px; background: none; color: #8fb0ff;
+  font: 500 12px -apple-system, system-ui, sans-serif; text-align: left; border-radius: 5px; }
+#tip .go:hover { background: #2c3442; }
 #tip { position: fixed; z-index: 9; display: none; max-width: calc(100% - 24px); padding: 6px 9px;
   border-radius: 7px; background: #0d1015; border: 1px solid #45506a; color: #e8ebf0; pointer-events: none;
   font: 12px/1.45 -apple-system, system-ui, sans-serif; white-space: pre-line; box-shadow: 0 4px 14px rgba(0, 0, 0, .5); }
@@ -340,24 +344,39 @@ function counts(by) {
   const c = (list, cls, icon, word) => {
     const n = Array.isArray(list) ? list.length : 0;
     if (!n) return "";
-    const tip = `${icon} ${n} ${word}\n` + list.map(x => "• " + x).join("\n");
-    return `<span class="${cls}" data-tip="${esc(tip)}">${icon} ${n}</span>`;
+    const tip = `${icon} ${n} ${word} · ${WORDS.pick}`;
+    return `<span class="${cls}" data-tip="${esc(tip)}" data-list="${esc(JSON.stringify(list))}">${icon} ${n}</span>`;
   };
   document.getElementById("counts").innerHTML =
     c(by.working, "work", "⚙️", WORDS.working) + c(by.waiting, "wait", "✋", WORDS.waiting) + c(by.idle, "idle", "✓", WORDS.idle);
   size();
 }
 // The hint under what the pointer is on; Hammerspoon says where the pointer is (-1 when it left).
+// A count's hint lists its sessions as buttons and stays while the pointer is on it; it overlaps
+// the count a little, so the pointer goes onto it without leaving both.
 function hover(x, y) {
   const tip = document.getElementById("tip");
   const hit = x >= 0 && document.elementFromPoint(x, y);
+  if (hit && tip.classList.contains("list") && tip.contains(hit)) return;
   const el = hit && hit.closest("[data-tip]");
+  const list = el && el.dataset.list && JSON.parse(el.dataset.list);
+  tip.classList.toggle("list", !!list);
   if (!el) { tip.style.display = "none"; return; }
-  tip.textContent = el.dataset.tip;
+  if (list) {
+    tip.replaceChildren(el.dataset.tip, ...list.map(s => {
+      const b = document.createElement("button");
+      b.className = "go";
+      b.textContent = "• " + s.name;
+      b.onclick = () => post({ action: "session", session: s.session });
+      return b;
+    }));
+  } else tip.textContent = el.dataset.tip;
   tip.style.display = "block";
   const r = el.getBoundingClientRect();
+  const top = list ? r.bottom - 2 : r.bottom + 6;
   tip.style.left = Math.max(4, Math.min(r.left, innerWidth - tip.offsetWidth - 16)) + "px";
-  tip.style.top = (r.bottom + 6) + "px";
+  tip.style.top = top + "px";
+  tip.style.maxHeight = list ? (innerHeight - top - 8) + "px" : "";
 }
 function size() { post({ action: "size", h: document.querySelector(".b").offsetHeight + 8 }); }
 function bind(root) { for (const b of root.querySelectorAll("[data-a]")) b.onclick = () => post({ action: b.dataset.a }); }
@@ -913,6 +932,17 @@ onMessage = function(m)
     local back = pet.back
     removeAt(pet.index, "reply")
     if back then back:focus() end
+  elseif m.action == "session" then
+    -- A session picked from a count's list: its message here when it has one, else its terminal.
+    local st = type(m.session) == "string" and status[m.session]
+    if not st then return end
+    for i, item in ipairs(pet.items) do
+      if item.session == m.session then
+        pet.index = i
+        return render(false)
+      end
+    end
+    goTo({ session = m.session, bg = st.bg })
   elseif m.action == "editor" then
     if type(req.cwd) == "string" then
       local editor = editorApp()
