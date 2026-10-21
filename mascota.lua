@@ -64,7 +64,7 @@ local pet -- the pet on screen: { canvas, web, items, index, size, ... } or nil
 local drag -- the pet being dragged: { from, at, moved }
 local resize -- the bubble being resized: { from, w, h }
 local sheet, petName, loadedId = nil, nil, nil
-local watcher, mouseTap, tapGuard, idleTimer
+local watcher, mouseTap, tapGuard, idleTimer, jobTimer
 local queue, waitingSince = {}, 0 -- messages waiting for you to pause, before the pet comes out
 
 -- Pet sprites ----------------------------------------------------------------------------
@@ -275,8 +275,12 @@ end
 local shownCounts
 local function refreshCounts()
   local working, waiting, idle = counts()
-  -- The bubble always: the session on show may have changed state while the totals did not.
-  if pet and pet.web then pet.web:evaluateJavaScript(countsJS()) end
+  -- The bubble whenever what it shows changed: the session on show may have changed state while
+  -- the totals did not.
+  if pet and pet.web then
+    local js = countsJS()
+    if js ~= pet.countsJS then pet.countsJS = js; pet.web:evaluateJavaScript(js) end
+  end
   local key = working .. "/" .. waiting .. "/" .. idle
   if key == shownCounts then return end
   shownCounts = key
@@ -290,6 +294,46 @@ local function setStatus(session, state, req)
   status[session] = state and { state = state, at = os.time(), label = req and req.label or old.label,
     bg = req and req.bg or old.bg, last = req and MOOD[req.kind] and req or old.last,
     repo = req and type(req.status) == "table" and type(req.status.repo) == "string" and req.status.repo or old.repo } or nil
+  refreshCounts()
+end
+
+local JOBS = os.getenv("HOME") .. "/.claude/jobs/"
+local JOB_STATE = { working = "working", blocked = "waiting", done = "idle" } -- a stopped one is gone
+
+-- Background sessions (`claude agents`) say themselves what they are doing, in their job's
+-- state.json, and that wins over what the hooks said: a turn that ended with a shell or a subagent
+-- still running is working, which the hooks cannot always tell. A job whose file was not touched
+-- for 3 hours is gone; one the pet never heard from (begun before a reload) joins as job-<id>, and
+-- a session heard from under two ids of ours (a plugin reload) counts once, as the newest.
+local function syncJobs()
+  if not hs.fs.attributes(JOBS) then return end
+  local jobs, now = {}, os.time()
+  for bg in hs.fs.dir(JOBS) do
+    local file = JOBS .. bg .. "/state.json"
+    local attrs = bg:match("^%w+$") and hs.fs.attributes(file)
+    if attrs and now - attrs.modification < 3 * 3600 then
+      local d = hs.json.read(file)
+      if type(d) == "table" then jobs[bg] = { state = d.state, at = math.floor(attrs.modification), cwd = d.cwd } end
+    end
+  end
+  local newest = {}
+  for session, st in pairs(status) do
+    if st.bg and (not newest[st.bg] or status[newest[st.bg]].at < st.at) then newest[st.bg] = session end
+  end
+  for session, st in pairs(status) do
+    local job = st.bg and jobs[st.bg]
+    if st.bg and (newest[st.bg] ~= session or job and not JOB_STATE[job.state]) then
+      status[session], windows[session] = nil, nil
+    elseif job then
+      st.state, st.at = JOB_STATE[job.state], math.max(st.at, job.at)
+    end
+  end
+  for bg, job in pairs(jobs) do
+    if not newest[bg] and JOB_STATE[job.state] then
+      status["job-" .. bg] = { state = JOB_STATE[job.state], at = job.at, bg = bg,
+        label = type(job.cwd) == "string" and job.cwd:match("[^/]+$") or bg }
+    end
+  end
   refreshCounts()
 end
 
@@ -1236,6 +1280,8 @@ function M.start()
   mouseTap = hs.eventtap.new({ types.leftMouseDown, types.leftMouseDragged, types.leftMouseUp }, onMouse)
   -- macOS turns off a mouse listener that answered too slowly once; turn it back on.
   tapGuard = hs.timer.doEvery(3, function() if pet and not mouseTap:isEnabled() then drag = nil; mouseTap:start() end end)
+  syncJobs()
+  jobTimer = hs.timer.doEvery(5, syncJobs)
 end
 
 return M
