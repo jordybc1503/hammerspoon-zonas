@@ -27,10 +27,12 @@ A pet runs to the terminal window whose Claude Code session **finished**, **has 
 - It only shows up when you are not already in that session's window.
 - Click it to go to the window. In default permission mode, **Approve** and **Deny** answer the
   prompt from the pop-up; in auto mode it only points you to a real prompt.
-- Turn it on or off, pick the pet, the events, its size and how it moves in the editor's
-  **Pet** tab, or from the ▦ menu.
+- The ▦ menu has a block of its own for the pet: turn it on or off, its **Mode**, the editor
+  **Open folders in** uses, and **Pet settings…**, the editor's **Pet** tab (the pet, the
+  events, its size and how it moves).
 - Drag it somewhere and the next pets on that screen come there instead of to their window.
-- ▦ › **Pet mode** › **Focus** keeps it still: it only moves when a new message comes.
+- **Mode** › **Focus** keeps it still: it only moves when a new message comes.
+- The bubble shows the session's folder, with a button that opens it in your code editor.
 
 It has two halves: `mascota.lua` here draws the pet, and a Claude Code plugin tells it what
 happens. Install the plugin once, at the prompt of a Claude Code session:

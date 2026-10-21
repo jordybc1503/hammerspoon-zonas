@@ -243,7 +243,7 @@ const SCREENS = INIT.screens || [];
 const chosenFor = s => S.screens[s.name] ?? (s.wide ? S.active : "mitades");
 const usedOn = l => SCREENS.filter(s => chosenFor(s) === l.id);
 
-let tab = "zones";
+let tab = INIT.tab || "zones";
 let selId = SCREENS[0] ? chosenFor(SCREENS[0]) : S.active;
 let selPath = null;
 let selFloat = null;

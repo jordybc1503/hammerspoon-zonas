@@ -56,9 +56,9 @@ local STR = {
     prefs = "Preferencias de Hammerspoon", title = "Zonas y atajos",
     ready = "Atajos listos · menú ▦ arriba", notInDict = "No está en el diccionario.",
     noSel = "Sin selección", noSelBody = "Selecciona una palabra y vuelve a pulsar %s.",
-    floating = "Zona flotante", pet = "%s: avisos de Claude Code", petDefault = "Mascota",
-    petMode = "Modo de la mascota", normal = "Normal", focus = "Concentración: quieta salvo con un mensaje nuevo",
-    petEditor = "Abrir carpetas de la mascota en", editorSystem = "El predeterminado del sistema (%s)",
+    floating = "Zona flotante", pet = "%s · mascota de Claude Code", petDefault = "Mascota", petOn = "Mostrar avisos",
+    petMode = "Modo", normal = "Normal", focus = "Concentración: quieta salvo con un mensaje nuevo",
+    petEditor = "Abrir carpetas en", editorSystem = "El predeterminado del sistema (%s)", petSettings = "Ajustes de la mascota…",
     deskDefault = "Escritorio %d", deskPrompt = "Nombre de este escritorio",
     deskRename = "Clic o ⌃⌥N para renombrar este escritorio", deskCancel = "Cancelar",
     deskMenu = "Renombrar este escritorio (%s)…", deskShow = "Mostrar el escritorio en la barra",
@@ -72,9 +72,9 @@ local STR = {
     prefs = "Hammerspoon preferences", title = "Zones and shortcuts",
     ready = "Shortcuts ready · ▦ menu at the top", notInDict = "Not in the dictionary.",
     noSel = "Nothing selected", noSelBody = "Select a word and press %s again.",
-    floating = "Floating zone", pet = "%s: Claude Code alerts", petDefault = "Pet",
-    petMode = "Pet mode", normal = "Normal", focus = "Focus: still unless a new message comes",
-    petEditor = "Open the pet's folders in", editorSystem = "System default (%s)",
+    floating = "Floating zone", pet = "%s · Claude Code pet", petDefault = "Pet", petOn = "Show alerts",
+    petMode = "Mode", normal = "Normal", focus = "Focus: still unless a new message comes",
+    petEditor = "Open folders in", editorSystem = "System default (%s)", petSettings = "Pet settings…",
     deskDefault = "Desktop %d", deskPrompt = "Name for this desktop",
     deskRename = "Click or ⌃⌥N to rename this desktop", deskCancel = "Cancel",
     deskMenu = "Rename this desktop (%s)…", deskShow = "Show the desktop in the menu bar",
@@ -409,8 +409,13 @@ end
 
 -- Editor --------------------------------------------------------------------------------
 
-local function openEditor()
-  if editor then editor:show():bringToFront(true); hs.focus(); return end
+-- tab: the one it opens on ("pet"); a menu item's call passes a table, which means the first.
+local function openEditor(tab)
+  tab = type(tab) == "string" and tab or nil
+  if editor then
+    if tab then editor:evaluateJavaScript(string.format("tab = %q; render();", tab)) end
+    editor:show():bringToFront(true); hs.focus(); return
+  end
   local uc = hs.webview.usercontent.new("zonas")
   uc:setCallback(function(msg)
     local b = msg.body
@@ -436,7 +441,7 @@ local function openEditor()
   end
   local init = hs.json.encode({ templates = TEMPLATES, saved = saved, defaults = DEFAULTS,
     screen = { w = s.w, h = s.h }, screens = screens, sysLang = systemLang(),
-    pets = require("mascota").pets() })
+    pets = require("mascota").pets(), tab = tab })
   local file = io.open(DIR .. "zonas.html")
   local html = file:read("a")
   file:close()
@@ -497,11 +502,15 @@ local function menuItems()
     { title = M.t("edit"), fn = openEditor },
     { title = "-" },
     { title = M.translateCombo() .. "     " .. M.t("translate"), disabled = true },
-    { title = M.t("pet", pet.name() or M.t("petDefault")), checked = pet.enabled(), fn = pet.toggle },
-    { title = M.t("petMode"), menu = modes },
-    { title = M.t("petEditor"), menu = editors },
     { title = M.t("deskMenu", desk.name()), fn = desk.rename },
     { title = M.t("deskShow"), checked = desk.shown(), fn = desk.toggle },
+    { title = "-" },
+    -- The pet's own block, titled like the zones' one.
+    { title = M.t("pet", pet.name() or M.t("petDefault")), disabled = true },
+    { title = M.t("petOn"), checked = pet.enabled(), fn = pet.toggle },
+    { title = M.t("petMode"), menu = modes },
+    { title = M.t("petEditor"), menu = editors },
+    { title = M.t("petSettings"), fn = function() openEditor("pet") end },
     { title = "-" },
     { title = M.t("guide"), fn = function() hs.urlevent.openURL("https://github.com/jordybc1503/hammerspoon-zonas#readme") end },
     { title = M.t("reload"), fn = hs.reload },
