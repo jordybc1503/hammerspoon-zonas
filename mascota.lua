@@ -917,6 +917,9 @@ local function inside(p, f) return f and p.x >= f.x and p.x < f.x + f.w and p.y 
 -- active (for typing) and the button or box under the pointer is pressed or focused at once.
 local function onMouse(e)
   if not pet then return false end
+  -- Hammerspoon's own click (the one passed into the terminal below) goes through as is: taken
+  -- again while the bubble is not active, it would click again and again, the pointer held there.
+  if e:getProperty(hs.eventtap.event.properties.eventSourceUnixProcessID) == hs.processInfo.processID then return false end
   local types = hs.eventtap.event.types
   local kind, p = e:getType(), e:location()
   if kind == types.leftMouseDown and inside(p, pet.canvas:frame()) then
