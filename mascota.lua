@@ -1126,10 +1126,11 @@ local function onMouse(e)
     return true
   end
   -- The bubble's top-left corner resizes it (the pet and the bottom-right stay put); the size is
-  -- kept for the next bubbles.
+  -- kept for the next bubbles. It grows as far as the screen's left and top edges.
   if resize and kind == types.leftMouseDragged then
-    pet.bw = math.max(260, math.min(900, resize.w + resize.from.x - p.x))
-    pet.fixedH = math.max(120, math.min(900, resize.h + resize.from.y - p.y))
+    local f, s = pet.canvas:frame(), hs.mouse.getCurrentScreen():frame()
+    pet.bw = math.max(260, math.min(f.x - GAP - 12 - s.x, resize.w + resize.from.x - p.x))
+    pet.fixedH = math.max(120, math.min(f.y + f.h - s.y, resize.h + resize.from.y - p.y))
     placeBubble()
     return true
   end
