@@ -272,7 +272,8 @@ local function counts()
   local by, now = { working = {}, waiting = {}, idle = {} }, os.time()
   for session, st in pairs(status) do
     if now - st.at > 3 * 3600 then status[session], windows[session] = nil, nil
-    elseif by[st.state] then
+    -- A done session you have seen leaves the counts; the recent list still opens it.
+    elseif by[st.state] and not (st.seen and st.state == "idle") then
       local name = titleOf(st.bg, st.claude)
       table.insert(by[st.state], { name = (st.repo or st.label or "?") .. (name and (" · " .. name) or ""), session = session })
     end
@@ -334,6 +335,13 @@ local function setStatus(session, state, req)
   refreshCounts()
 end
 
+-- You have seen the session: its message taken off the bubble, its terminal opened, or you were
+-- in it already. Anything new from it (setStatus, or its job working again) counts it again.
+local function seen(session)
+  local st = status[session]
+  if st and not st.seen then st.seen = true; refreshCounts() end
+end
+
 local JOBS = os.getenv("HOME") .. "/.claude/jobs/"
 local JOB_STATE = { working = "working", blocked = "waiting", done = "idle" } -- a stopped one is gone
 
@@ -362,12 +370,14 @@ local function syncJobs()
     if st.bg and (newest[st.bg] ~= session or job and not JOB_STATE[job.state]) then
       status[session], windows[session] = nil, nil
     elseif job then
+      if st.state ~= JOB_STATE[job.state] then st.seen = nil end
       st.state, st.at = JOB_STATE[job.state], math.max(st.at, job.at)
     end
   end
   for bg, job in pairs(jobs) do
     if not newest[bg] and JOB_STATE[job.state] then
-      status["job-" .. bg] = { state = JOB_STATE[job.state], at = job.at, bg = bg,
+      -- Done before the pet heard of it (begun before a reload): not news.
+      status["job-" .. bg] = { state = JOB_STATE[job.state], at = job.at, bg = bg, seen = job.state == "done",
         label = type(job.cwd) == "string" and job.cwd:match("[^/]+$") or bg }
     end
   end
@@ -742,6 +752,7 @@ local function resume(claude)
 end
 
 local function goTo(req)
+  seen(req.session)
   local entry = windows[req.session]
   -- A background session: the terminal showing it (titled with its id or name), else the agent
   -- view you already have open (titled "… claude agents"), else a new window attached to it.
@@ -857,6 +868,7 @@ end
 -- prompt). With none left the pet leaves, after a jump (or a droop on Deny) for an answer.
 local function removeAt(i, reply)
   local req = table.remove(pet.items, i)
+  seen(req.session)
   if req.wait then answer(req, reply or "terminal") end
   if #pet.items == 0 then
     if sheet and reply and reply ~= "terminal" then
@@ -1245,8 +1257,8 @@ function M.toggle()
   end
 end
 
--- From the ▦ menu: the pet comes back after you closed it, with each session's last message,
--- newest first; on screen but minimized, its bubble opens again.
+-- From the ▦ menu: the pet comes back after you closed it, with the newest session's last
+-- message (the others you open from its lists); on screen but minimized, its bubble opens again.
 function M.summon()
   if pet and not pet.leaving then
     if pet.minimized then render(false) end
@@ -1255,16 +1267,18 @@ function M.summon()
   local sessions = {}
   for session, st in pairs(status) do sessions[#sessions + 1] = { session = session, at = st.at } end
   table.sort(sessions, function(a, b) return a.at > b.at end)
-  local items = {}
-  for _, s in ipairs(sessions) do items[#items + 1] = lastOf(s.session) end
-  if #items == 0 then return hs.alert.show(t("nobody")) end
+  local newest
+  for _, s in ipairs(sessions) do
+    newest = lastOf(s.session)
+    if newest then break end
+  end
+  if not newest then return hs.alert.show(t("nobody")) end
   if pet then remove() end
   -- Messages waiting for a pause in your typing join this pet instead of bringing a second one.
   idleTimer:stop()
   local waiting = queue
   queue = {}
-  create(items[1])
-  for i = 2, #items do table.insert(pet.items, items[i]) end
+  create(newest)
   for _, req in ipairs(waiting) do add(req) end
 end
 
@@ -1301,6 +1315,7 @@ local function handle(req)
     return
   end
   inSession(req.session, hs.window.focusedWindow(), function()
+    seen(req.session)
     if req.wait then answer(req, "terminal") end
   end, function() add(req) end)
 end
