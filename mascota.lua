@@ -212,21 +212,22 @@ local function bgName(bg)
 end
 
 -- A session's title as Claude Code shows it: the name you gave it (/rename), else the one Claude
--- made up. Both are lines of its transcript, found by Claude's id for it; the file is read whole
--- once, then only the lines added since.
+-- made up. Both are lines of its transcript, found by Claude's id for it, and written again every
+-- few hundred KB: its last MB is read once, then only the lines added since.
 local PROJECTS = os.getenv("HOME") .. "/.claude/projects/"
-local titles = {} -- claude id → { path, read, custom, ai }
+local titles = {} -- claude id → { path, read, custom, ai }, or false: no transcript
 local function sessionTitle(claude)
   if type(claude) ~= "string" or not claude:match("^[%w%-]+$") then return nil end
   local c = titles[claude]
-  if not c then
+  if c == nil then
     for dir in hs.fs.dir(PROJECTS) do
       local path = PROJECTS .. dir .. "/" .. claude .. ".jsonl"
-      if hs.fs.attributes(path) then c = { path = path, read = 0 }; break end
+      local size = hs.fs.attributes(path, "size")
+      if size then c = { path = path, read = math.max(0, size - 2 ^ 20) }; break end
     end
-    if not c then return nil end
-    titles[claude] = c
+    titles[claude] = c or false
   end
+  if not c then return nil end
   if (hs.fs.attributes(c.path, "size") or 0) > c.read then
     local f = io.open(c.path, "rb")
     if f then
@@ -241,6 +242,9 @@ local function sessionTitle(claude)
   local title = c.custom or c.ai
   return title ~= "" and title or nil
 end
+
+-- What a session is called: a background one by its job, any other by its transcript.
+local function titleOf(bg, claude) return bg and bgName(bg) or sessionTitle(claude) end
 
 -- Every request puts its session first among the recent ones, by Claude's own id for it (the one
 -- `claude --resume` takes; a plugin reload gives the same session a new id of ours).
@@ -269,7 +273,7 @@ local function counts()
   for session, st in pairs(status) do
     if now - st.at > 3 * 3600 then status[session], windows[session] = nil, nil
     elseif by[st.state] then
-      local name = st.bg and bgName(st.bg)
+      local name = titleOf(st.bg, st.claude)
       table.insert(by[st.state], { name = (st.repo or st.label or "?") .. (name and (" · " .. name) or ""), session = session })
     end
   end
@@ -278,7 +282,7 @@ local function counts()
   by.recent = {}
   local seen = {}
   for _, r in ipairs(hs.settings.get(RECENT) or {}) do
-    local name = r.bg and bgName(r.bg)
+    local name = titleOf(r.bg, r.claude)
     table.insert(by.recent, { name = r.name .. (name and (" · " .. name) or ""), session = r.session, claude = r.claude,
       live = status[r.session] ~= nil and not seen[r.session], ago = ago(now - r.at) })
     seen[r.session] = true
@@ -325,7 +329,7 @@ end
 local function setStatus(session, state, req)
   local old = status[session] or {}
   status[session] = state and { state = state, at = os.time(), label = req and req.label or old.label,
-    bg = req and req.bg or old.bg, last = req and MOOD[req.kind] and req or old.last,
+    bg = req and req.bg or old.bg, claude = req and req.claude or old.claude, last = req and MOOD[req.kind] and req or old.last,
     repo = req and type(req.status) == "table" and type(req.status.repo) == "string" and req.status.repo or old.repo } or nil
   refreshCounts()
 end
@@ -559,7 +563,7 @@ local function placeHTML(req)
   local name = repo or req.label
   if not name or name == "" then return '<span class="state" id="state"></span>' end
   local branch = type(req.status) == "table" and type(req.status.branch) == "string" and ("\n🌿 " .. req.status.branch) or ""
-  local title = req.bg and bgName(req.bg) or sessionTitle(req.claude)
+  local title = titleOf(req.bg, req.claude)
   local tip = (repo and "🔗 " or "📁 ") .. name .. (title and ("\n💬 " .. title) or "") .. branch
   return '<span class="repo" data-tip="' .. esc(tip) .. '">' .. (repo and "🔗 " or "📁 ") .. esc(name)
     .. (title and ('<span class="title"> · ' .. esc(title) .. "</span>") or "")
