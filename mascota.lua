@@ -211,6 +211,37 @@ local function bgName(bg)
   return type(state) == "table" and type(state.name) == "string" and state.name ~= "" and state.name or nil
 end
 
+-- A session's title as Claude Code shows it: the name you gave it (/rename), else the one Claude
+-- made up. Both are lines of its transcript, found by Claude's id for it; the file is read whole
+-- once, then only the lines added since.
+local PROJECTS = os.getenv("HOME") .. "/.claude/projects/"
+local titles = {} -- claude id → { path, read, custom, ai }
+local function sessionTitle(claude)
+  if type(claude) ~= "string" or not claude:match("^[%w%-]+$") then return nil end
+  local c = titles[claude]
+  if not c then
+    for dir in hs.fs.dir(PROJECTS) do
+      local path = PROJECTS .. dir .. "/" .. claude .. ".jsonl"
+      if hs.fs.attributes(path) then c = { path = path, read = 0 }; break end
+    end
+    if not c then return nil end
+    titles[claude] = c
+  end
+  if (hs.fs.attributes(c.path, "size") or 0) > c.read then
+    local f = io.open(c.path, "rb")
+    if f then
+      f:seek("set", c.read)
+      local lines = (f:read("a") or ""):match("^.*\n") or "" -- a line being written waits
+      f:close()
+      c.read = c.read + #lines
+      for t in lines:gmatch('"customTitle":"([^"]*)"') do c.custom = t end
+      for t in lines:gmatch('"aiTitle":"([^"]*)"') do c.ai = t end
+    end
+  end
+  local title = c.custom or c.ai
+  return title ~= "" and title or nil
+end
+
 -- Every request puts its session first among the recent ones, by Claude's own id for it (the one
 -- `claude --resume` takes; a plugin reload gives the same session a new id of ours).
 local function remember(req)
@@ -355,6 +386,7 @@ html, body { margin: 0; background: transparent; overflow: hidden;
 .counts span { display: inline-flex; align-items: center; gap: 3px; }
 .repo { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font: 600 12px Menlo, monospace; color: #c9d1dc; }
+.repo .title { font: 500 12px -apple-system, system-ui, sans-serif; color: #9aa5b5; }
 #tip.list { pointer-events: auto; white-space: normal; overflow-y: auto; }
 #tip .s { display: flex; align-items: center; gap: 4px; margin-top: 3px; }
 #tip .s span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 6px; }
@@ -527,8 +559,10 @@ local function placeHTML(req)
   local name = repo or req.label
   if not name or name == "" then return '<span class="state" id="state"></span>' end
   local branch = type(req.status) == "table" and type(req.status.branch) == "string" and ("\n🌿 " .. req.status.branch) or ""
-  local tip = (repo and "🔗 " or "📁 ") .. name .. (req.bg and bgName(req.bg) and ("\n💬 " .. bgName(req.bg)) or "") .. branch
+  local title = req.bg and bgName(req.bg) or sessionTitle(req.claude)
+  local tip = (repo and "🔗 " or "📁 ") .. name .. (title and ("\n💬 " .. title) or "") .. branch
   return '<span class="repo" data-tip="' .. esc(tip) .. '">' .. (repo and "🔗 " or "📁 ") .. esc(name)
+    .. (title and ('<span class="title"> · ' .. esc(title) .. "</span>") or "")
     .. '</span><span class="state" id="state"></span>'
 end
 
