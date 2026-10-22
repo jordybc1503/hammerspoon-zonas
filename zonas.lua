@@ -304,6 +304,17 @@ local function zoneAt(zones, screen, p)
   end
 end
 
+-- Near the edge of two zones, the other one, so Shift alone spans both, like FancyZones.
+local EDGE = 24 -- px from the edge
+local function zoneNear(zones, screen, p, cur)
+  if zones[cur].float then return end
+  local f = screen:frame()
+  local fx, fy, ex, ey = (p.x - f.x) / f.w, (p.y - f.y) / f.h, EDGE / f.w, EDGE / f.h
+  for i, z in ipairs(zones) do
+    if i ~= cur and not z.float and fx >= z.x - ex and fx < z.x + z.w + ex and fy >= z.y - ey and fy < z.y + z.h + ey then return i end
+  end
+end
+
 -- Spans two zones like FancyZones: the rectangle that covers both, grown until it cuts none.
 local function span(zones, a, b)
   local A, B = zones[a], zones[b]
@@ -397,12 +408,13 @@ local function onDrag(e)
   local cur = zoneAt(drag.zones, screen, mouse)
   if not cur then return false end
   if flags[saved.keys.merge] then drag.anchor = drag.anchor or cur else drag.anchor = nil end
+  local from = drag.anchor or zoneNear(drag.zones, screen, mouse, cur) or cur
   -- Redraw only when the zones under the mouse change, not on every drag event.
-  local key = (drag.anchor or cur) .. ":" .. cur
+  local key = from .. ":" .. cur
   if key == drag.key and drag.overlay then return false end
   drag.key = key
   local picked
-  drag.zone, picked = span(drag.zones, drag.anchor or cur, cur)
+  drag.zone, picked = span(drag.zones, from, cur)
   showZones(screen, picked)
   return false
 end
