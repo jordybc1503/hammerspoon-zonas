@@ -45,14 +45,16 @@ local STR = {
     sWorking = "trabajando", sWaiting = "te espera", sIdle = "terminada",
     prev = "Mensaje anterior", next = "Mensaje siguiente", state = "Qué hace esta sesión ahora", inBubble = "💬 Burbuja", inTerminal = "Terminal ↗",
     recent = "recientes", resume = "Retomar ↗",
-    minimize = "Minimizar (clic en la mascota para abrir)", editor = "Abrir en %s ↗", editorDefault = "el editor" },
+    minimize = "Minimizar (clic en la mascota para abrir)", editor = "Abrir en %s ↗", editorDefault = "el editor",
+    nobody = "Todavía no hay sesiones que mostrar" },
   en = { done = "Done!", question = "I have a question", needs = "I need you in the terminal", ask = "May I use %s?",
     allow = "Approve", deny = "Deny", go = "Go to terminal →", reply = "Reply to Claude…", send = "Send",
     other = "Another answer…", working = "working", waiting = "waiting for you", idle = "done", close = "Close",
     sWorking = "working", sWaiting = "needs input", sIdle = "done",
     prev = "Previous message", next = "Next message", state = "What this session is doing now", inBubble = "💬 Bubble", inTerminal = "Terminal ↗",
     recent = "recent", resume = "Resume ↗",
-    minimize = "Minimize (click the pet to open)", editor = "Open in %s ↗", editorDefault = "the editor" },
+    minimize = "Minimize (click the pet to open)", editor = "Open in %s ↗", editorDefault = "the editor",
+    nobody = "No sessions to show yet" },
 }
 local function t(k) return (STR[require("zonas").lang()] or STR.en)[k] end
 -- The pet's settings live with the zones (zonas.json), edited in the ▦ editor's Pet tab.
@@ -1009,6 +1011,18 @@ add = function(req)
   end
 end
 
+-- A session's last message again, to read and reply to: an approval or a question it showed was
+-- answered already, so it comes back as a plain "I need you in the terminal". A background
+-- session with none still opens, as its terminal.
+local function lastOf(session)
+  local st = status[session]
+  local again = st and (st.last and hs.fnutils.copy(st.last) or st.bg and { kind = "done", label = st.label, bg = st.bg })
+  if not again then return end
+  again.session, again.wait = session, false
+  if again.kind ~= "done" then again.kind = "needs" end
+  return again
+end
+
 onMessage = function(m)
   if not pet or pet.leaving then return end
   local req = pet.items[pet.index]
@@ -1050,13 +1064,8 @@ onMessage = function(m)
         return render(false)
       end
     end
-    -- Else its last message again, to read and reply to: an approval or a question it showed was
-    -- answered already, so it comes back as a plain "I need you in the terminal". A background
-    -- session with none still opens, as its terminal.
-    local again = st.last and hs.fnutils.copy(st.last) or st.bg and { kind = "done", label = st.label, bg = st.bg }
+    local again = lastOf(m.session)
     if again then
-      again.session, again.wait = m.session, false
-      if again.kind ~= "done" then again.kind = "needs" end
       table.insert(pet.items, again)
       pet.index = #pet.items
       return render(false)
@@ -1196,6 +1205,29 @@ function M.toggle()
   if not p.enabled and pet then
     while pet and not pet.leaving do removeAt(#pet.items, "terminal") end
   end
+end
+
+-- From the ▦ menu: the pet comes back after you closed it, with each session's last message,
+-- newest first; on screen but minimized, its bubble opens again.
+function M.summon()
+  if pet and not pet.leaving then
+    if pet.minimized then render(false) end
+    return
+  end
+  local sessions = {}
+  for session, st in pairs(status) do sessions[#sessions + 1] = { session = session, at = st.at } end
+  table.sort(sessions, function(a, b) return a.at > b.at end)
+  local items = {}
+  for _, s in ipairs(sessions) do items[#items + 1] = lastOf(s.session) end
+  if #items == 0 then return hs.alert.show(t("nobody")) end
+  if pet then remove() end
+  -- Messages waiting for a pause in your typing join this pet instead of bringing a second one.
+  idleTimer:stop()
+  local waiting = queue
+  queue = {}
+  create(items[1])
+  for i = 2, #items do table.insert(pet.items, items[i]) end
+  for _, req in ipairs(waiting) do add(req) end
 end
 
 local function handle(req)
