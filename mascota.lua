@@ -11,7 +11,7 @@ local INBOX = os.getenv("HOME") .. "/Library/Caches/mascota"
 local REPLIES = INBOX .. "/replies"
 local TERMINALS = { ["com.mitchellh.ghostty"] = true, ["com.googlecode.iterm2"] = true, ["com.apple.Terminal"] = true }
 local BW = 340 -- bubble width until you resize it; the pet stands to its right
--- A background session's bubble is its own terminal: ttyd serves `claude attach <id>` there.
+-- A background session's bubble is its own terminal: ttyd serves its folder's agent view there, on it.
 local TTYD = hs.fs.attributes("/opt/homebrew/bin/ttyd") and "/opt/homebrew/bin/ttyd"
   or hs.fs.attributes("/usr/local/bin/ttyd") and "/usr/local/bin/ttyd"
 local CLAUDE
@@ -669,14 +669,30 @@ end
 -- The address of the session's terminal, started if need be; nil for a session in a terminal tab
 -- (its screen belongs to that tab) or without ttyd. ttyd listens on the loopback only, under a
 -- random path, and talks only to its own page (-O).
+-- It runs the agent view of the folder the session began in, not `claude attach`, so ← lists
+-- only that folder's sessions: the view comes up with the session's row picked
+-- (CLAUDE_AGENTS_SELECT), expect presses Enter on it, then hands you the keys and the bubble's size.
+local EXPECT = [[
+trap {stty rows [stty rows] columns [stty columns] < $spawn_out(slave,name)} WINCH
+spawn -noecho $env(MASCOTA_CLAUDE) agents --cwd $env(MASCOTA_CWD) --dangerously-skip-permissions
+expect -timeout 15 return {send "\r"}
+interact
+]]
 local function terminalFor(req)
   if not (TTYD and CLAUDE and req.bg) then return nil end
   if pet.tty and pet.tty.bg == req.bg then return pet.tty.url end
   stopTerminal()
+  local file = JOBS .. req.bg .. "/state.json"
+  local job = hs.fs.attributes(file) and hs.json.read(file) or {}
   local port, path = math.random(20000, 40000), hs.host.uuid():gsub("-", "")
   local task = hs.task.new(TTYD, nil, { "-p", tostring(port), "-i", "lo0", "-O", "-W", "-b", "/" .. path,
     "-t", "fontSize=12", "-t", "fontFamily=Menlo", "-t", "disableReconnect=true", "-t", "disableLeaveAlert=true",
-    "-t", 'theme={"background":"#12161d","scrollbarSliderBackground":"#3a4150"}', CLAUDE, "attach", req.bg })
+    "-t", 'theme={"background":"#12161d","scrollbarSliderBackground":"#3a4150"}', "/usr/bin/expect", "-c", EXPECT })
+  local env = task:environment()
+  env.CLAUDE_AGENTS_SELECT, env.MASCOTA_CLAUDE = req.bg, CLAUDE
+  env.MASCOTA_CWD = job.originCwd or job.cwd or req.cwd or os.getenv("HOME")
+  task:setEnvironment(env)
+  task:setWorkingDirectory(env.MASCOTA_CWD) -- where a session you start from that view begins
   if not task:start() then return nil end
   pet.tty = { task = task, bg = req.bg, url = string.format("http://127.0.0.1:%d/%s/", port, path) }
   return pet.tty.url
