@@ -17,6 +17,10 @@ each screen.
   system language).
 - **Translator:** select a word in any app and press `⌘⌥T`. It uses the Oxford Spanish-English
   dictionary that comes with macOS, with no network.
+- **One language per keyboard** (editor → *Keyboards*): press *Detect keyboard*, press a key on
+  it and pick its layout. The Mac switches layout as you type on each one, and remembers it after
+  you unplug it. macOS only says a key's keyboard *type* (ANSI, ISO, JIS), so two keyboards of the
+  same type need one changed in System Settings → Keyboard → *Change Keyboard Type…*.
 
 ## Claude Code pet
 
@@ -77,6 +81,7 @@ the editor.
 | `zonas.html` | The editor, opened from the ▦ menu |
 | `zonas.json` | What you save in the editor. Without it, the defaults apply |
 | `bin/dict.swift` | The program that reads the macOS dictionary |
+| `teclados.lua` | One input language per keyboard |
 | `mascota.lua` | The Claude Code pet: draws it, moves it, answers approvals |
 | `claude-plugin/mascota/` | The Claude Code plugin that tells the pet what happens |
 | `.claude-plugin/marketplace.json` | Makes this repo a Claude Code marketplace for that plugin |

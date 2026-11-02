@@ -44,6 +44,8 @@ local DEFAULTS = {
   -- of the app the bubble opens a session's folder in, "" for the one macOS opens .json files with.
   pet = { enabled = true, id = "", size = "m", look = true, run = true, mode = "normal", editor = "",
     events = { done = true, question = true, needs = true } },
+  -- One input language per keyboard (teclados.lua): { type = keyboard type, name, layout = source id }.
+  keyboards = {},
 }
 
 local STR = {
@@ -171,6 +173,10 @@ local function valid(d)
   for _, v in ipairs({ p.enabled, p.look, p.run, p.events.done, p.events.question, p.events.needs }) do
     if type(v) ~= "boolean" then return false end
   end
+  if type(d.keyboards) ~= "table" then return false end
+  for _, k in ipairs(d.keyboards) do
+    if type(k) ~= "table" or type(k.type) ~= "number" or type(k.name) ~= "string" or type(k.layout) ~= "string" then return false end
+  end
   for _, l in ipairs(d.layouts or {}) do
     if type(l.id) ~= "string" or type(l.name) ~= "string" or not validNode(l.root, 1)
       or not validFloats(l.floats) then return false end
@@ -282,6 +288,7 @@ end
 local function save()
   hs.json.write(saved, FILE, true, true)
   apply()
+  require("teclados").apply()
 end
 
 -- While the editor records a shortcut, ours are off so the key reaches the editor.
@@ -433,6 +440,11 @@ local function openEditor(tab)
     local b = msg.body
     if b.type == "record" then return pause(b.on) end
     if b.type == "demo" then return require("mascota").demo(b.kind) end
+    if b.type == "detectKeyboard" then
+      return require("teclados").detect(function(kind)
+        if editor then editor:evaluateJavaScript(string.format("detected(%d)", kind)) end
+      end)
+    end
     if b.type == "save" then
       if not valid(b.data) then return editor:evaluateJavaScript("saved(false)") end
       saved = b.data
@@ -453,7 +465,7 @@ local function openEditor(tab)
   end
   local init = hs.json.encode({ templates = TEMPLATES, saved = saved, defaults = DEFAULTS,
     screen = { w = s.w, h = s.h }, screens = screens, sysLang = systemLang(),
-    pets = require("mascota").pets(), tab = tab })
+    pets = require("mascota").pets(), sources = require("teclados").sources(), tab = tab })
   local file = io.open(DIR .. "zonas.html")
   local html = file:read("a")
   file:close()
@@ -558,6 +570,7 @@ saved = load()
 M.openEditor = openEditor
 M.lang = lang
 M.pet = function() return saved.pet end
+M.keyboards = function() return saved.keyboards end
 -- The pet's counts next to the ▦ icon: sessions working and waiting for you.
 M.badge = function(text) if menu then menu:setTitle("▦" .. (text or "")) end end
 M.save = save
