@@ -65,8 +65,8 @@ async function send($: EngineInterface, kind: string, fields: object, wait = fal
 }
 
 // A turn's end and its Stop hook come in either order, and only Stop knows whether background
-// work (a shell, a subagent, a workflow) will wake the session again: "done" waits for both, and
-// a session with work in flight is still working.
+// work (a subagent, a workflow) will wake the session again: "done" waits for both, and a session
+// with such work in flight is still working.
 let ended: { text: string; seconds: number } | undefined;
 let busy: boolean | undefined;
 
@@ -130,8 +130,10 @@ export const register: Register = (on) => {
     return result;
   });
 
+  // A shell or a monitor can outlive the task (a dev server, a watcher) and Claude Code calls the
+  // session done with them running; subagents, workflows and the like finish and report back.
   on("classic.Stop", ($, e, next) => {
-    busy = (e.background_tasks?.length ?? 0) > 0;
+    busy = (e.background_tasks ?? []).some((t: { type?: string }) => t.type !== "shell" && t.type !== "monitor");
     settle($);
     return next(e);
   });
