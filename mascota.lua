@@ -83,17 +83,20 @@ local function readPet(dir)
   if img then return info, img end
 end
 
--- id "" takes the first pet found; "drawn" (or no pet) leaves the drawn stand-in.
+-- id "" takes the first pet found; "drawn" (or no pet) leaves the drawn stand-in. A pet that did
+-- not load is looked for again next time, and the pet on screen keeps the look it came out with.
 local function loadPet(id)
-  if id == loadedId then return end
-  loadedId, sheet, petName = id, nil, nil
-  if id == "drawn" or not hs.fs.attributes(PETS) then return end
-  for dir in hs.fs.dir(PETS) do
-    if id == "" or dir == id then
-      local info, img = readPet(dir)
-      if img then sheet, petName = img, info.displayName or dir; return end
+  if id == loadedId or pet then return end
+  sheet, petName = nil, nil
+  if id ~= "drawn" and hs.fs.attributes(PETS) then
+    for dir in hs.fs.dir(PETS) do
+      if id == "" or dir == id then
+        local info, img = readPet(dir)
+        if img then sheet, petName = img, info.displayName or dir; break end
+      end
     end
   end
+  if sheet or id == "drawn" then loadedId = id end
 end
 
 -- The pets the editor offers: id, name and a small picture of each.
