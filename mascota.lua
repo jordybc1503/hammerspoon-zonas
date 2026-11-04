@@ -45,6 +45,7 @@ local STR = {
     sWorking = "trabajando", sWaiting = "te espera", sIdle = "terminada",
     prev = "Mensaje anterior", next = "Mensaje siguiente", state = "Qué hace esta sesión ahora", inBubble = "💬 Burbuja", inTerminal = "Terminal ↗",
     recent = "recientes", resume = "Retomar ↗",
+    hold = "En espera: la retomas desde ⏸ arriba", held = "en espera", sHeld = "en espera",
     minimize = "Minimizar (clic en la mascota para abrir)", editor = "Abrir en %s ↗", editorDefault = "el editor",
     nobody = "Todavía no hay sesiones que mostrar" },
   en = { done = "Done!", question = "I have a question", needs = "I need you in the terminal", ask = "May I use %s?",
@@ -53,6 +54,7 @@ local STR = {
     sWorking = "working", sWaiting = "needs input", sIdle = "done",
     prev = "Previous message", next = "Next message", state = "What this session is doing now", inBubble = "💬 Bubble", inTerminal = "Terminal ↗",
     recent = "recent", resume = "Resume ↗",
+    hold = "On hold: pick it up again from ⏸ at the top", held = "on hold", sHeld = "on hold",
     minimize = "Minimize (click the pet to open)", editor = "Open in %s ↗", editorDefault = "the editor",
     nobody = "No sessions to show yet" },
 }
@@ -269,13 +271,15 @@ local function ago(s)
 -- the hints, then the recent ones, newest first, open (`live`) or ended. A session silent for 3
 -- hours is gone (closed without telling us).
 local function counts()
-  local by, now = { working = {}, waiting = {}, idle = {} }, os.time()
+  local by, now = { working = {}, waiting = {}, idle = {}, held = {} }, os.time()
   for session, st in pairs(status) do
-    if now - st.at > 3 * 3600 then status[session], windows[session] = nil, nil
+    -- One you put on hold is silent while it waits for you: it stays a day.
+    if now - st.at > (st.held and 86400 or 3 * 3600) then status[session], windows[session] = nil, nil
     -- A done session you have seen leaves the counts; the recent list still opens it.
-    elseif by[st.state] and not (st.seen and st.state == "idle") then
+    elseif st.held or by[st.state] and not (st.seen and st.state == "idle") then
+      local group = st.held and "held" or st.state
       local name = titleOf(st.bg, st.claude)
-      table.insert(by[st.state], { name = (st.repo or st.label or "?") .. (name and (" · " .. name) or ""), session = session })
+      table.insert(by[group], { name = (st.repo or st.label or "?") .. (name and (" · " .. name) or ""), session = session })
     end
   end
   for _, list in pairs(by) do table.sort(list, function(a, b) return a.name < b.name end) end
@@ -288,13 +292,13 @@ local function counts()
       live = status[r.session] ~= nil and not seen[r.session], ago = ago(now - r.at) })
     seen[r.session] = true
   end
-  return #by.working, #by.waiting, #by.idle, by
+  return #by.working, #by.waiting, #by.idle, by, #by.held
 end
 
 -- What the session on show is doing now (the last word from it), else what its message says.
 local function stateOf(req)
   local st = req and status[req.session]
-  return st and st.state or req and STATE[req.kind] or ""
+  return st and (st.held and "held" or st.state) or req and STATE[req.kind] or ""
 end
 
 -- The bubble's call that draws the counts and the state of the session on show, and the words
@@ -307,22 +311,22 @@ local function words()
   return hs.json.encode({ working = t("working"), waiting = t("waiting"), idle = t("idle"), close = t("close"),
     minimize = t("minimize"), sWorking = t("sWorking"), sWaiting = t("sWaiting"), sIdle = t("sIdle"),
     prev = t("prev"), next = t("next"), state = t("state"), inBubble = t("inBubble"), inTerminal = t("inTerminal"),
-    recent = t("recent"), resume = t("resume") })
+    recent = t("recent"), resume = t("resume"), hold = t("hold"), held = t("held"), sHeld = t("sHeld") })
 end
 
 local shownCounts
 local function refreshCounts()
-  local working, waiting, idle = counts()
+  local working, waiting, idle, _, held = counts()
   -- The bubble whenever what it shows changed: the session on show may have changed state while
   -- the totals did not.
   if pet and pet.web then
     local js = countsJS()
     if js ~= pet.countsJS then pet.countsJS = js; pet.web:evaluateJavaScript(js) end
   end
-  local key = working .. "/" .. waiting .. "/" .. idle
+  local key = working .. "/" .. waiting .. "/" .. idle .. "/" .. held
   if key == shownCounts then return end
   shownCounts = key
-  require("zonas").badge((working > 0 and ("  ⚙" .. working) or "") .. (waiting > 0 and ("  ✋" .. waiting) or ""))
+  require("zonas").badge((working > 0 and ("  ⚙" .. working) or "") .. (waiting > 0 and ("  ✋" .. waiting) or "") .. (held > 0 and ("  ⏸" .. held) or ""))
 end
 
 -- What a request says about its session, and where it comes from, for the hints; `last` is its
@@ -339,7 +343,7 @@ end
 -- in it already. Anything new from it (setStatus, or its job working again) counts it again.
 local function seen(session)
   local st = status[session]
-  if st and not st.seen then st.seen = true; refreshCounts() end
+  if st and (not st.seen or st.held) then st.seen, st.held = true, nil; refreshCounts() end
 end
 
 local JOBS = os.getenv("HOME") .. "/.claude/jobs/"
@@ -370,7 +374,7 @@ local function syncJobs()
     if st.bg and (newest[st.bg] ~= session or job and not JOB_STATE[job.state]) then
       status[session], windows[session] = nil, nil
     elseif job then
-      if st.state ~= JOB_STATE[job.state] then st.seen = nil end
+      if st.state ~= JOB_STATE[job.state] then st.seen, st.held = nil, nil end
       st.state, st.at = JOB_STATE[job.state], math.max(st.at, job.at)
     end
   end
@@ -416,7 +420,8 @@ html, body { margin: 0; background: transparent; overflow: hidden;
 .state.wait { color: #f0a24a; background: rgba(240, 162, 74, .15); }
 .state.idle { color: #4fbf6f; background: rgba(79, 191, 111, .15); }
 .counts .work { color: #6f9dff; } .counts .wait { color: #f0a24a; } .counts .idle { color: #4fbf6f; }
-.counts .recent { color: #9aa5b5; }
+.counts .recent { color: #9aa5b5; } .counts .held, .state.held { color: #b58cff; }
+.state.held { background: rgba(181, 140, 255, .15); }
 .nav { margin-left: auto; display: flex; align-items: center; gap: 2px; font-size: 11px; color: #9aa5b5; }
 .nav button { background: none; color: #c9d1dc; padding: 0 6px; font-size: 15px; line-height: 18px; }
 .nav button:hover { color: #fff; }
@@ -462,7 +467,7 @@ const post = m => window.webkit.messageHandlers.mascota.postMessage(m);
 // The session on show: working, waiting for you or done.
 function mine(s) {
   const el = document.getElementById("state");
-  const m = { working: ["work", "⚙️", WORDS.sWorking], waiting: ["wait", "✋", WORDS.sWaiting], idle: ["idle", "✓", WORDS.sIdle] }[s];
+  const m = { working: ["work", "⚙️", WORDS.sWorking], waiting: ["wait", "✋", WORDS.sWaiting], idle: ["idle", "✓", WORDS.sIdle], held: ["held", "⏸", WORDS.sHeld] }[s];
   if (!el) return;
   el.className = m ? "state " + m[0] : "state";
   el.textContent = m ? `${m[1]} ${m[2]}` : "";
@@ -479,7 +484,7 @@ function counts(by) {
   };
   document.getElementById("counts").innerHTML =
     c(by.working, "work", "⚙️", WORDS.working) + c(by.waiting, "wait", "✋", WORDS.waiting) + c(by.idle, "idle", "✓", WORDS.idle)
-    + c(by.recent, "recent", "🕘", WORDS.recent);
+    + c(by.held, "held", "⏸", WORDS.held) + c(by.recent, "recent", "🕘", WORDS.recent);
   size();
 }
 // The hint under what the pointer is on; Hammerspoon says where the pointer is (-1 when it left).
@@ -526,7 +531,7 @@ function bind(root) { for (const b of root.querySelectorAll("[data-a]")) b.oncli
 function pager(i, n) {
   const nav = document.getElementById("nav");
   nav.innerHTML = (n > 1 ? `<button data-a="prev" data-tip="${WORDS.prev}">‹</button>${i}/${n}<button data-a="next" data-tip="${WORDS.next}">›</button>` : "")
-    + `<button data-a="min" data-tip="${WORDS.minimize}">–</button><button data-a="close" data-tip="${WORDS.close}">×</button>`;
+    + `<button data-a="hold" data-tip="${WORDS.hold}">⏸</button><button data-a="min" data-tip="${WORDS.minimize}">–</button><button data-a="close" data-tip="${WORDS.close}">×</button>`;
   bind(nav);
 }
 bind(document);
@@ -1128,6 +1133,11 @@ onMessage = function(m)
     end
   elseif m.action == "close" then
     removeAt(pet.index, "terminal")
+  elseif m.action == "hold" then
+    -- Off the pet, but kept under ⏸ until the session does something new or you close it.
+    removeAt(pet.index, "terminal")
+    local st = status[req.session]
+    if st then st.held = true; refreshCounts() end
   else
     removeAt(pet.index, "terminal")
     goTo(req)
