@@ -21,6 +21,7 @@ end
 local BUBBLE = "mascota.bubble" -- { w, h } you gave the bubble by dragging its top-left corner
 local GAP = 10 -- between the bubble and the pet
 local SPOT = "mascota.spot" -- { [screen uuid] = { x, y } } where you last dropped the pet, from the screen's top-left
+local LOG = INBOX .. "/log.txt" -- why each message did or did not bring the pet out; the plugin adds the ones it dropped
 local RECENT = "mascota.recent" -- your last 10 sessions, newest first: { claude, session, name, cwd, bg, at }
 
 -- The pet is a Codex pet (~/.codex/pets/<id>): an 8 × 11 sheet of 192 × 208 frames, one animation
@@ -199,6 +200,14 @@ local function write(path, text)
   f:write(text)
   f:close()
   os.rename(path .. ".tmp", path)
+end
+
+-- One line per message that could show, so a session that never called you can be traced.
+local function log(req, what)
+  local f = io.open(LOG, "a")
+  if not f then return end
+  f:write(os.date("%Y-%m-%d %H:%M:%S "), what, " ", req.kind, " ", req.label or "?", " ", req.bg or req.session, "\n")
+  f:close()
 end
 
 local function answer(req, value) write(INBOX .. "/" .. req.id .. ".answer", value) end
@@ -1321,13 +1330,18 @@ local function handle(req)
   -- Switched off, not wanted for this event, or you are already in that tab: no pet. The
   -- settings come first: asking windows can wait on a slow app.
   if not wanted then
+    log(req, p.enabled and "not-wanted" or "pet-off")
     if req.wait then answer(req, "terminal") end
     return
   end
   inSession(req.session, hs.window.focusedWindow(), function()
+    log(req, "in-its-tab")
     seen(req.session)
     if req.wait then answer(req, "terminal") end
-  end, function() add(req) end)
+  end, function()
+    log(req, pet and not pet.leaving and "shown" or "queued")
+    add(req)
+  end)
 end
 
 local function poll()
@@ -1363,6 +1377,9 @@ end
 function M.start()
   hs.fs.mkdir(INBOX)
   hs.fs.mkdir(REPLIES)
+  -- ponytail: one old copy at 1 MB, enough to trace a missed message from today
+  local size = hs.fs.attributes(LOG, "size")
+  if size and size > 1e6 then os.rename(LOG, LOG .. ".old") end
   -- Requests left from before a reload are stale: their callers already gave up.
   for file in hs.fs.dir(INBOX) do
     if file:match("%.json$") or file:match("%.answer$") then os.remove(INBOX .. "/" .. file) end

@@ -4,12 +4,12 @@ import { describe, excerpt } from "./text.ts";
 // The mascot itself lives in Hammerspoon (~/.hammerspoon/mascota.lua). This plugin drops one JSON
 // request per event in its inbox; Hammerspoon picks it up by deleting the file. For an approval or
 // a question the script then waits for Hammerspoon's answer file, so the hook waits without
-// spending its budget. A reply typed in the bubble comes back as replies/<session>.reply.
+// spending its budget. One it drops (not taken in 3 s) goes to log.txt. A reply typed in the bubble comes back as replies/<session>.reply.
 const SCRIPT = `
 d="$HOME/Library/Caches/mascota"; f="$d/$1"; mkdir -p "$d"
 printf '%s' "$2" > "$f.tmp" && mv "$f.tmp" "$f.json"
 i=0; while [ -f "$f.json" ] && [ $i -lt 15 ]; do sleep 0.2; i=$((i+1)); done
-if [ -f "$f.json" ]; then rm -f "$f.json"; echo off; exit 0; fi
+if [ -f "$f.json" ]; then rm -f "$f.json"; echo "$(date '+%Y-%m-%d %H:%M:%S') dropped (Hammerspoon did not take it in 3 s) $(printf '%s' "$2" | cut -c1-120)" >> "$d/log.txt"; echo off; exit 0; fi
 [ "$3" = 1 ] || exit 0
 i=0; while [ ! -f "$f.answer" ] && [ $i -lt 1160 ]; do sleep 0.5; i=$((i+1)); done
 [ -f "$f.answer" ] && cat "$f.answer" && rm -f "$f.answer"
