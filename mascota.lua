@@ -210,7 +210,12 @@ local function log(req, what)
   f:close()
 end
 
-local function answer(req, value) write(INBOX .. "/" .. req.id .. ".answer", value) end
+-- Each waiting request gets one answer, here: the session reads the first and stops listening.
+local function answer(req, value)
+  if not req.wait then return end
+  req.wait = false
+  write(INBOX .. "/" .. req.id .. ".answer", value)
+end
 
 -- Counts -----------------------------------------------------------------------------------
 
@@ -748,9 +753,18 @@ end
 local FRONT = "return id of focused terminal of selected tab of front window"
 
 -- Through osascript in a task: hs.osascript waits on Ghostty on the main thread.
+-- A question to Ghostty (`done` given) that gets no answer in 2 s counts as none, so a message never
+-- waits on it. Tasks in flight are kept here: one collected early would never call back.
+local asking = {}
 local function ghostty(script, done)
-  hs.task.new("/usr/bin/osascript", done and function(code, out) done(code == 0 and out or nil) end,
-    { "-e", 'tell application "Ghostty"\n' .. script .. "\nend tell" }):start()
+  local task
+  task = hs.task.new("/usr/bin/osascript", function(code, out)
+    if asking[task] then asking[task]:stop() end
+    asking[task] = nil
+    if done then done(code == 0 and out or nil) end
+  end, { "-e", 'tell application "Ghostty"\n' .. script .. "\nend tell" })
+  asking[task] = done and hs.timer.doAfter(2, function() if task:isRunning() then task:terminate() end end) or false
+  task:start()
 end
 
 -- A recent session that ended opens again in a new Ghostty window: `claude --resume` in its folder.
@@ -1380,9 +1394,21 @@ function M.start()
   -- ponytail: one old copy at 1 MB, enough to trace a missed message from today
   local size = hs.fs.attributes(LOG, "size")
   if size and size > 1e6 then os.rename(LOG, LOG .. ".old") end
-  -- Requests left from before a reload are stale: their callers already gave up.
+  -- Left from before a reload: a request a few seconds old still has its session waiting (taken
+  -- below), and an answer is read within half a second; anything older is stale.
+  local now = os.time()
   for file in hs.fs.dir(INBOX) do
-    if file:match("%.json$") or file:match("%.answer$") then os.remove(INBOX .. "/" .. file) end
+    local path = INBOX .. "/" .. file
+    local age = now - (hs.fs.attributes(path, "modification") or 0)
+    if file:match("%.json$") and age > 5 or file:match("%.answer$") and age > 60 or file:match("%.tmp$") and age > 60 then
+      os.remove(path)
+    end
+  end
+  -- A reload or quit hands every approval and question still waiting back to its terminal; the
+  -- session would wait ~10 minutes for a pet that is gone.
+  hs.shutdownCallback = function()
+    for _, req in ipairs(queue) do answer(req, "terminal") end
+    for _, req in ipairs(pet and pet.items or {}) do answer(req, "terminal") end
   end
   -- A reload leaves the terminals of the pet it replaced running.
   hs.task.new("/usr/bin/pkill", nil, { "-9", "-f", "ttyd -p [0-9]* -i lo0 -O -W -b /" }):start()
@@ -1395,6 +1421,7 @@ function M.start()
   tapGuard = hs.timer.doEvery(3, function() if pet and not mouseTap:isEnabled() then drag = nil; mouseTap:start() end end)
   syncJobs()
   jobTimer = hs.timer.doEvery(5, syncJobs)
+  poll()
 end
 
 return M
