@@ -42,7 +42,8 @@ local DEFAULTS = {
   -- The Claude Code pet (mascota.lua). id "" is the first Codex pet found, "drawn" the stand-in.
   -- mode: "normal", or "focus" (still but for a new message's animation). editor: the bundle id
   -- of the app the bubble opens a session's folder in, "" for the one macOS opens .json files with.
-  pet = { enabled = true, id = "", size = "m", look = true, run = true, mode = "normal", editor = "",
+  -- font: the text size, in px, of the session's terminal inside the bubble.
+  pet = { enabled = true, id = "", size = "m", look = true, run = true, mode = "normal", editor = "", font = 12,
     events = { done = true, question = true, needs = true } },
 }
 
@@ -167,7 +168,8 @@ local function valid(d)
   end
   local p = d.pet
   if type(p) ~= "table" or type(p.id) ~= "string" or not ({ s = true, m = true, l = true })[p.size]
-    or not ({ normal = true, focus = true })[p.mode] or type(p.editor) ~= "string" or type(p.events) ~= "table" then return false end
+    or not ({ normal = true, focus = true })[p.mode] or type(p.editor) ~= "string" or type(p.events) ~= "table"
+    or type(p.font) ~= "number" or p.font < 9 or p.font > 24 then return false end
   for _, v in ipairs({ p.enabled, p.look, p.run, p.events.done, p.events.question, p.events.needs }) do
     if type(v) ~= "boolean" then return false end
   end

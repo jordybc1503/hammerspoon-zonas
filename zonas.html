@@ -183,6 +183,7 @@ const STR = {
     evDone: "Cuando una sesión termina", evQuestion: "Cuando Claude te hace una pregunta", evNeeds: "Cuando necesita tu permiso",
     petMove: "Cómo se mueve", petMoveHelp: "El tamaño, y si llega corriendo y mira hacia tu ratón.",
     petLook: "Mira hacia el ratón", petRun: "Llega corriendo", size_s: "Pequeña", size_m: "Mediana", size_l: "Grande",
+    petFont: "Tamaño del texto de la terminal", petFontHelp: "El de la terminal de la sesión dentro de la burbuja. Se aplica la próxima vez que se abra.",
     petTry: "Guardar y probar",
     addFloat: "Añadir zona flotante", floatN: "Zona flotante", width: "Ancho %", height: "Alto %", center: "Centrar",
     floatHint: "Queda encima de las demás zonas. Arrástrala en el dibujo para moverla.",
@@ -220,6 +221,7 @@ const STR = {
     evDone: "When a session finishes", evQuestion: "When Claude asks you a question", evNeeds: "When it needs your permission",
     petMove: "How it moves", petMoveHelp: "Its size, and whether it runs in and looks at your mouse.",
     petLook: "Looks at the mouse", petRun: "Runs in", size_s: "Small", size_m: "Medium", size_l: "Large",
+    petFont: "Terminal text size", petFontHelp: "The session's terminal inside the bubble. It applies the next time it opens.",
     petTry: "Save and try",
     addFloat: "Add floating zone", floatN: "Floating zone", width: "Width %", height: "Height %", center: "Center",
     floatHint: "It sits on top of the other zones. Drag it in the drawing to move it.",
@@ -686,6 +688,10 @@ function petView() {
   const size = el("select", { id: "pet-size" });
   for (const v of ["s", "m", "l"]) size.append(el("option", { value: v, textContent: t("size_" + v), selected: p.size === v }));
   size.onchange = () => { p.size = size.value; changed(); };
+  const font = el("input", { type: "range", id: "pet-font", min: 9, max: 24, step: 1, value: p.font });
+  const fontOut = el("kbd", { textContent: p.font + " px" });
+  font.oninput = () => { fontOut.textContent = font.value + " px"; };
+  font.onchange = () => { p.font = Number(font.value); changed(); };
   const tryIt = el("button", { className: "btn primary", textContent: t("petTry") });
   tryIt.onclick = () => {
     if (dirty && !save()) return;
@@ -699,6 +705,7 @@ function petView() {
     card(t("petMove"), t("petMoveHelp"), size,
       check("pet-run", t("petRun"), () => p.run, v => { p.run = v; }),
       check("pet-look", t("petLook"), () => p.look, v => { p.look = v; })),
+    card(t("petFont"), t("petFontHelp"), el("div", { className: "row" }, font, fontOut)),
     el("div", { className: "actions" }, tryIt));
 }
 
