@@ -694,7 +694,7 @@ local function terminalFor(req)
   stopTerminal()
   local port, path = math.random(20000, 40000), hs.host.uuid():gsub("-", "")
   local task = hs.task.new(TTYD, nil, { "-p", tostring(port), "-i", "lo0", "-O", "-W", "-b", "/" .. path,
-    "-t", "fontSize=12", "-t", "fontFamily=Menlo", "-t", "disableReconnect=true", "-t", "disableLeaveAlert=true",
+    "-t", "fontSize=" .. math.floor(settings().font), "-t", "fontFamily=Menlo", "-t", "disableReconnect=true", "-t", "disableLeaveAlert=true",
     "-t", 'theme={"background":"#12161d","scrollbarSliderBackground":"#3a4150"}', CLAUDE, "attach", req.bg })
   if not task:start() then return nil end
   pet.tty = { task = task, bg = req.bg, url = string.format("http://127.0.0.1:%d/%s/", port, path) }
