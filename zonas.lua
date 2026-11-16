@@ -45,6 +45,9 @@ local DEFAULTS = {
   -- font: the text size, in px, of the session's terminal inside the bubble.
   pet = { enabled = true, id = "", size = "m", look = true, run = true, mode = "normal", editor = "", font = 12,
     events = { done = true, question = true, needs = true } },
+  -- A language for each keyboard (teclados.lua). list: { type = the keyboard type macOS reports,
+  -- name = what the user calls it, source = the input source id it writes with }.
+  keyboards = { enabled = true, list = {} },
 }
 
 local STR = {
@@ -63,6 +66,7 @@ local STR = {
     deskDefault = "Escritorio %d", deskPrompt = "Nombre de este escritorio",
     deskRename = "Clic o ⌃⌥N para renombrar este escritorio", deskCancel = "Cancelar",
     deskMenu = "Renombrar este escritorio (%s)…", deskShow = "Mostrar el escritorio en la barra",
+    keyboards = "Idioma de cada teclado…",
   },
   en = {
     layout = "%s · %s", zone = "Zone %d", full = "Full screen",
@@ -79,6 +83,7 @@ local STR = {
     deskDefault = "Desktop %d", deskPrompt = "Name for this desktop",
     deskRename = "Click or ⌃⌥N to rename this desktop", deskCancel = "Cancel",
     deskMenu = "Rename this desktop (%s)…", deskShow = "Show the desktop in the menu bar",
+    keyboards = "Language of each keyboard…",
   },
 }
 
@@ -172,6 +177,12 @@ local function valid(d)
     or type(p.font) ~= "number" or p.font < 9 or p.font > 24 then return false end
   for _, v in ipairs({ p.enabled, p.look, p.run, p.events.done, p.events.question, p.events.needs }) do
     if type(v) ~= "boolean" then return false end
+  end
+  local kb = d.keyboards
+  if type(kb) ~= "table" or type(kb.enabled) ~= "boolean" or type(kb.list) ~= "table" then return false end
+  for _, k in ipairs(kb.list) do
+    if type(k) ~= "table" or type(k.type) ~= "number" or type(k.name) ~= "string"
+      or type(k.source) ~= "string" then return false end
   end
   for _, l in ipairs(d.layouts or {}) do
     if type(l.id) ~= "string" or type(l.name) ~= "string" or not validNode(l.root, 1)
@@ -284,6 +295,7 @@ end
 local function save()
   hs.json.write(saved, FILE, true, true)
   apply()
+  require("teclados").refresh()
 end
 
 -- While the editor records a shortcut, ours are off so the key reaches the editor.
@@ -435,6 +447,12 @@ local function openEditor(tab)
     local b = msg.body
     if b.type == "record" then return pause(b.on) end
     if b.type == "demo" then return require("mascota").demo(b.kind) end
+    -- "Add a keyboard": listen while the editor waits, then tell it which keyboard the key came from.
+    if b.type == "detect" then
+      local kind = require("teclados").detect(b.on)
+      if not b.on then editor:evaluateJavaScript(string.format("detected(%s)", kind or "null")) end
+      return
+    end
     if b.type == "save" then
       if not valid(b.data) then return editor:evaluateJavaScript("saved(false)") end
       saved = b.data
@@ -455,7 +473,8 @@ local function openEditor(tab)
   end
   local init = hs.json.encode({ templates = TEMPLATES, saved = saved, defaults = DEFAULTS,
     screen = { w = s.w, h = s.h }, screens = screens, sysLang = systemLang(),
-    pets = require("mascota").pets(), tab = tab })
+    pets = require("mascota").pets(), tab = tab,
+    sources = require("teclados").sources(), source = hs.keycodes.currentSourceID() })
   local file = io.open(DIR .. "zonas.html")
   local html = file:read("a")
   file:close()
@@ -464,7 +483,7 @@ local function openEditor(tab)
     :windowTitle(M.t("title"))
     :allowTextEntry(true)
     :deleteOnClose(true)
-    :windowCallback(function(action) if action == "closing" then editor = nil; pause(false) end end)
+    :windowCallback(function(action) if action == "closing" then editor = nil; pause(false); require("teclados").detect(false) end end)
     :html((html:gsub("__INIT__", function() return init end)))
     :show()
   editor:bringToFront(true)
@@ -518,6 +537,7 @@ local function menuItems()
     { title = M.translateCombo() .. "     " .. M.t("translate"), disabled = true },
     { title = M.t("deskMenu", desk.name()), fn = desk.rename },
     { title = M.t("deskShow"), checked = desk.shown(), fn = desk.toggle },
+    { title = M.t("keyboards"), fn = function() openEditor("keyboards") end },
     { title = "-" },
     -- The pet's own block, titled like the zones' one.
     { title = M.t("pet", pet.name() or M.t("petDefault")), disabled = true },
@@ -560,6 +580,7 @@ saved = load()
 M.openEditor = openEditor
 M.lang = lang
 M.pet = function() return saved.pet end
+M.keyboards = function() return saved.keyboards end
 -- The pet's counts next to the ▦ icon: sessions working and waiting for you.
 M.badge = function(text) if menu then menu:setTitle("▦" .. (text or "")) end end
 M.save = save

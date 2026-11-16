@@ -18,6 +18,20 @@ each screen.
 - **Translator:** select a word in any app and press `⌘⌥T`. It uses the Oxford Spanish-English
   dictionary that comes with macOS, with no network.
 
+## A language for each keyboard
+
+Type on the laptop's keyboard and the Mac writes in its language (say, Spanish); type on the
+external one and it writes in that one's (say, U.S.). The input source changes on its own when
+you change keyboard.
+
+Set it in ▦ → *Language of each keyboard…* (the editor's **Keyboards** tab): press
+**Add a keyboard**, press a key on it, pick its language, and do the same with the other one.
+The languages are the input sources added in System Settings › Keyboard › Input Sources.
+
+macOS does not say which device a key came from, only its keyboard *type*, so each keyboard is
+recognised by its type. A MacBook's keyboard and an external one have different types; two
+keyboards of the same type cannot be told apart, and the tab says so.
+
 ## Claude Code pet
 
 A pet runs to the terminal window whose Claude Code session **finished**, **has a question** or
