@@ -121,7 +121,7 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .mod { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
 .mod:has(input:checked) { border-color: var(--accent); background: var(--soft); }
-select { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; }
+select, input[type="text"] { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; }
 input[type="range"] { width: 240px; accent-color: var(--accent); }
 .mini { max-width: 420px; }
 .petgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; width: 100%; }
@@ -141,6 +141,7 @@ input[type="range"] { width: 240px; accent-color: var(--accent); }
   <button class="tab" data-tab="keys" id="tab-keys"></button>
   <button class="tab" data-tab="general" id="tab-general"></button>
   <button class="tab" data-tab="pet" id="tab-pet"></button>
+  <button class="tab" data-tab="keyboards" id="tab-keyboards"></button>
   <span class="spacer"></span>
   <span id="msg" class="msg"></span>
   <button id="save" class="btn primary"></button>
@@ -187,6 +188,13 @@ const STR = {
     petTry: "Guardar y probar",
     addFloat: "Añadir zona flotante", floatN: "Zona flotante", width: "Ancho %", height: "Alto %", center: "Centrar",
     floatHint: "Queda encima de las demás zonas. Arrástrala en el dibujo para moverla.",
+    keyboards: "Teclados", kbOn: "Un idioma para cada teclado",
+    kbOnHelp: "Escribe con un teclado y el Mac escribe en el idioma de ese teclado; cambia de teclado y cambia de idioma solo.",
+    kbList: "Tus teclados", kbListHelp: "Pulsa «Añadir un teclado» y luego una tecla en el teclado que quieras añadir. Repite con cada teclado.",
+    kbAdd: "Añadir un teclado", kbPress: "Pulsa una tecla en ese teclado…", kbDefault: "Teclado {0}", kbType: "tipo {0}",
+    kbRemove: "Quitar", kbNone: "Aún no hay ninguno.", kbName: "Nombre", kbMissed: "No se ha detectado el teclado. Prueba otra vez.",
+    kbSame: "Ese teclado ya está en la lista como «{0}». Si es otro teclado, el Mac los ve iguales (mismo tipo) y no se pueden distinguir.",
+    kbLangs: "Los idiomas son las fuentes de entrada de Ajustes del Sistema › Teclado › Fuentes de entrada.",
   },
   en: {
     zones: "Zones", keys: "Shortcuts", general: "General", save: "Save", saved: "Saved. It works now.",
@@ -225,6 +233,13 @@ const STR = {
     petTry: "Save and try",
     addFloat: "Add floating zone", floatN: "Floating zone", width: "Width %", height: "Height %", center: "Center",
     floatHint: "It sits on top of the other zones. Drag it in the drawing to move it.",
+    keyboards: "Keyboards", kbOn: "A language for each keyboard",
+    kbOnHelp: "Type on a keyboard and the Mac writes in that keyboard's language; change keyboard and the language changes on its own.",
+    kbList: "Your keyboards", kbListHelp: "Press “Add a keyboard”, then a key on the keyboard you want to add. Do it for each keyboard.",
+    kbAdd: "Add a keyboard", kbPress: "Press a key on that keyboard…", kbDefault: "Keyboard {0}", kbType: "type {0}",
+    kbRemove: "Remove", kbNone: "None yet.", kbName: "Name", kbMissed: "The keyboard was not detected. Try again.",
+    kbSame: "That keyboard is already in the list as “{0}”. If it is another keyboard, the Mac sees both as the same (same type) and cannot tell them apart.",
+    kbLangs: "The languages are the input sources in System Settings › Keyboard › Input Sources.",
   },
 };
 const LANG_NAMES = { es: "Español", en: "English" };
@@ -240,6 +255,8 @@ const templates = INIT.templates.map(t => ({ ...t, template: true }));
 if (!S.screens || Array.isArray(S.screens)) S.screens = {};
 S.pet = { ...structuredClone(INIT.defaults.pet), ...(S.pet || {}) };
 S.pet.events = { ...INIT.defaults.pet.events, ...(S.pet.events || {}) };
+S.keyboards = { ...structuredClone(INIT.defaults.keyboards), ...(S.keyboards || {}) };
+if (!Array.isArray(S.keyboards.list)) S.keyboards.list = []; // an empty list can come back as {}
 // Same as layoutFor in zonas.lua: with no choice, an ultrawide uses S.active and others use Halves.
 const SCREENS = INIT.screens || [];
 const chosenFor = s => S.screens[s.name] ?? (s.wide ? S.active : "mitades");
@@ -252,6 +269,7 @@ let selFloat = null;
 let recording = null;
 let dirty = false;
 let confirmDelete = false;
+let detecting = false;
 
 const $ = id => document.getElementById(id);
 const lang = () => (STR[S.lang] ? S.lang : STR[INIT.sysLang] ? INIT.sysLang : "en");
@@ -374,6 +392,25 @@ window.addEventListener("keydown", e => {
   stopRecording();
   changed();
 });
+
+// "Add a keyboard": the next key pressed tells Hammerspoon which keyboard to add. It runs before
+// the other key listeners, so that key does nothing else.
+window.addEventListener("keydown", e => {
+  if (!detecting) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  detecting = false;
+  window.webkit.messageHandlers.zonas.postMessage({ type: "detect", on: false });
+}, true);
+
+// Hammerspoon calls this with the keyboard type of that key (null if it missed it).
+function detected(kind) {
+  const list = S.keyboards.list;
+  const known = list.find(k => k.type === kind);
+  if (kind == null || known) { render(); return say(kind == null ? t("kbMissed") : t("kbSame", known.name), true); }
+  list.push({ type: kind, name: t("kbDefault", list.length + 1), source: INIT.source });
+  changed();
+}
 
 function recButton(target, label) {
   const on = recording && recording.kind === target.kind && samePath(recording.path || [], target.path || []);
@@ -709,9 +746,42 @@ function petView() {
     el("div", { className: "actions" }, tryIt));
 }
 
+function keyboardsView() {
+  const kb = S.keyboards;
+  // Typing a name re-renders nothing, so the box keeps the focus.
+  const edited = () => { dirty = true; say(t("unsaved")); $("save").disabled = false; };
+  const on = el("input", { type: "checkbox", id: "kb-on", checked: kb.enabled });
+  on.onchange = () => { kb.enabled = on.checked; changed(); };
+  const sources = INIT.sources || [];
+  const rows = kb.list.map((k, i) => {
+    const name = el("input", { type: "text", value: k.name, placeholder: t("kbName"), ariaLabel: t("kbName") });
+    name.oninput = () => { k.name = name.value; edited(); };
+    const lang = el("select", { ariaLabel: t("langTitle") });
+    const ids = sources.map(x => x.id);
+    for (const x of ids.includes(k.source) ? sources : [...sources, { id: k.source, name: k.source }])
+      lang.append(el("option", { value: x.id, textContent: x.name, selected: x.id === k.source }));
+    lang.onchange = () => { k.source = lang.value; edited(); };
+    const del = el("button", { className: "btn danger", textContent: t("kbRemove") });
+    del.onclick = () => { kb.list.splice(i, 1); changed(); };
+    return el("div", { className: "row" }, name, lang, el("kbd", { textContent: t("kbType", k.type) }), del);
+  });
+  const add = el("button", { className: "btn" + (detecting ? " rec" : ""), textContent: t(detecting ? "kbPress" : "kbAdd") });
+  add.onclick = () => {
+    detecting = true;
+    window.webkit.messageHandlers.zonas.postMessage({ type: "detect", on: true });
+    say("");
+    render();
+  };
+  return el("div", { className: "page" },
+    card(t("kbOn"), t("kbOnHelp"), el("label", { className: "mod" }, on, t("kbOn"))),
+    el("section", { className: "card" }, el("h3", { textContent: t("kbList") }), el("p", { textContent: t("kbListHelp") }),
+      ...(rows.length ? rows : [el("p", { textContent: t("kbNone") })]),
+      el("div", { className: "actions" }, add), el("p", { textContent: t("kbLangs") })));
+}
+
 function render() {
   document.documentElement.lang = lang();
-  for (const name of ["zones", "keys", "general", "pet"]) {
+  for (const name of ["zones", "keys", "general", "pet", "keyboards"]) {
     const b = $("tab-" + name);
     b.textContent = t(name);
     b.className = "tab" + (tab === name ? " on" : "");
@@ -722,7 +792,7 @@ function render() {
   $("save").onclick = save;
   const view = $("view");
   const scroll = view.scrollTop;
-  view.replaceChildren(tab === "zones" ? zonesView() : tab === "keys" ? keysView() : tab === "pet" ? petView() : generalView());
+  view.replaceChildren(tab === "zones" ? zonesView() : tab === "keys" ? keysView() : tab === "pet" ? petView() : tab === "keyboards" ? keyboardsView() : generalView());
   view.scrollTop = scroll;
 }
 
