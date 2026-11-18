@@ -1016,12 +1016,15 @@ local function create(req)
   uc:setCallback(function(m) if type(m.body) == "table" then onMessage(m.body) end end)
   -- A link opened in the terminal goes to your browser: in every frame, window.open hands the
   -- address to Hammerspoon (the terminal opens a blank window and sets its address after).
+  -- Claude marks its links as terminal hyperlinks (OSC 8), and the terminal asks "Do you want to
+  -- navigate to …?" before opening one: that question is answered yes, as for any other link.
   uc:injectScript({ mainFrame = false, injectionTime = "documentStart", source = [[
     window.open = function (url) {
       const send = u => window.webkit.messageHandlers.mascota.postMessage({ action: "open", url: String(u) });
       if (url) { send(url); return null; }
       return { opener: null, close() {}, location: { set href(u) { send(u); } } };
-    };]] })
+    };
+    window.confirm = (ask => m => String(m).startsWith("Do you want to navigate to ") || ask(m))(window.confirm.bind(window));]] })
   pet.web = hs.webview.new({ x = dest.x - GAP - pet.bw - 12, y = dest.y, w = pet.bw + 12, h = pet.fixedH or pet.webH }, {}, uc)
     -- No window of its own for anything: a page asking for one gets your browser instead.
     :policyCallback(function(action, _, nav)
