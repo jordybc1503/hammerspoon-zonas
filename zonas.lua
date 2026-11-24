@@ -251,14 +251,36 @@ local function zonesFor(screen)
   return zones
 end
 
--- The gap between zones also applies at the screen edges, as in FancyZones.
-local function frameOf(screen, z)
-  local f, g = screen:frame(), saved.gap
+-- The part of the screen windows go in. macOS can leave a Dock that is always shown inside
+-- screen:frame() (seen on macOS 26), so the strip the Dock covers is cut off its side of the
+-- screen. A hidden Dock, or one on another screen, is outside the frame and cuts nothing.
+local function usable(screen)
+  local f = screen:frame()
+  f = { x = f.x, y = f.y, w = f.w, h = f.h }
+  local ok, d = pcall(function()
+    local dock = hs.application.applicationsForBundleID("com.apple.dock")[1]
+    local list = hs.axuielement.applicationElement(dock):attributeValue("AXChildren")[1]
+    local p, s = list:attributeValue("AXPosition"), list:attributeValue("AXSize")
+    return { x = p.x, y = p.y, w = s.w, h = s.h }
+  end)
+  if not ok or not d then return f end
+  local r, b = f.x + f.w, f.y + f.h
+  if d.x >= r or d.x + d.w <= f.x or d.y >= b or d.y + d.h <= f.y then return f end
+  if d.w > d.h then f.h = d.y - f.y -- at the bottom
+  elseif d.x + d.w / 2 < f.x + f.w / 2 then f.x, f.w = d.x + d.w, r - (d.x + d.w) -- on the left
+  else f.w = d.x - f.x end -- on the right
+  return f
+end
+M._usable = usable -- for a check from the hs command line
+
+-- The gap between zones also applies at the screen edges, as in FancyZones. f: usable(screen).
+local function frameOf(f, z)
+  local g = saved.gap
   local x, y, w, h = f.x + g / 2, f.y + g / 2, f.w - g, f.h - g
   return { x = x + w * z.x + g / 2, y = y + h * z.y + g / 2, w = w * z.w - g, h = h * z.h - g }
 end
 
-local function place(win, z) win:setFrame(frameOf(win:screen(), z), 0) end
+local function place(win, z) win:setFrame(frameOf(usable(win:screen()), z), 0) end
 
 local function moveTo(z)
   local win = hs.window.focusedWindow()
@@ -309,8 +331,7 @@ end
 
 local drag = {}
 
-local function zoneAt(zones, screen, p)
-  local f = screen:frame()
+local function zoneAt(zones, f, p)
   local fx, fy = (p.x - f.x) / f.w, (p.y - f.y) / f.h
   for i = #zones, 1, -1 do
     local z = zones[i]
@@ -320,9 +341,8 @@ end
 
 -- Near the edge of two zones, the other one, so Shift alone spans both, like FancyZones.
 local EDGE = 24 -- px from the edge
-local function zoneNear(zones, screen, p, cur)
+local function zoneNear(zones, f, p, cur)
   if zones[cur].float then return end
-  local f = screen:frame()
   local fx, fy, ex, ey = (p.x - f.x) / f.w, (p.y - f.y) / f.h, EDGE / f.w, EDGE / f.h
   for i, z in ipairs(zones) do
     if i ~= cur and not z.float and fx >= z.x - ex and fx < z.x + z.w + ex and fy >= z.y - ey and fy < z.y + z.h + ey then return i end
@@ -354,12 +374,11 @@ local function hideZones()
   drag.overlay, drag.zone, drag.anchor = nil, nil, nil
 end
 
-local function showZones(screen, picked)
-  local f = screen:frame()
+local function showZones(f, picked)
   if not drag.overlay then
     drag.overlay = hs.canvas.new(f):level(hs.canvas.windowLevels.overlay)
     for _, z in ipairs(drag.zones) do
-      local r = frameOf(screen, z)
+      local r = frameOf(f, z)
       drag.overlay:appendElements({ type = "rectangle", action = "strokeAndFill",
         frame = { x = r.x - f.x + 4, y = r.y - f.y + 4, w = r.w - 8, h = r.h - 8 },
         roundedRectRadii = { xRadius = 12, yRadius = 12 },
@@ -417,19 +436,19 @@ local function onDrag(e)
   local screen = hs.mouse.getCurrentScreen()
   if drag.screen ~= screen then
     hideZones()
-    drag.screen, drag.zones = screen, zonesFor(screen)
+    drag.screen, drag.zones, drag.frame = screen, zonesFor(screen), usable(screen)
   end
-  local cur = zoneAt(drag.zones, screen, mouse)
+  local cur = zoneAt(drag.zones, drag.frame, mouse)
   if not cur then return false end
   if flags[saved.keys.merge] then drag.anchor = drag.anchor or cur else drag.anchor = nil end
-  local from = drag.anchor or zoneNear(drag.zones, screen, mouse, cur) or cur
+  local from = drag.anchor or zoneNear(drag.zones, drag.frame, mouse, cur) or cur
   -- Redraw only when the zones under the mouse change, not on every drag event.
   local key = from .. ":" .. cur
   if key == drag.key and drag.overlay then return false end
   drag.key = key
   local picked
   drag.zone, picked = span(drag.zones, from, cur)
-  showZones(screen, picked)
+  showZones(drag.frame, picked)
   return false
 end
 
