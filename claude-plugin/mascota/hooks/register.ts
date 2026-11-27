@@ -64,19 +64,13 @@ async function send($: EngineInterface, kind: string, fields: object, wait = fal
   return run.stdout.trim();
 }
 
-// A turn's end and its Stop hook come in either order, and only Stop knows whether background
-// work (a subagent, a workflow) will wake the session again: "done" waits for both, and a session
-// with such work in flight is still working.
+// Background subagents and a workflow's agents run turns of their own (`e.agentId`): while one is
+// in flight the session wakes again when it reports back, so it is still working. A shell or a
+// monitor runs no turn, so one left running (a dev server, a watcher) doesn't hold the session.
+// Not classic.Stop's background_tasks: the managed sec-default plugin sends every classic.* event
+// past user-tier plugins, so that hook never ran and a busy session was called done.
+const agentTurns = new Set<string>();
 let ended: { text: string; seconds: number } | undefined;
-let busy: boolean | undefined;
-
-function settle($: EngineInterface): void {
-  if (!ended || busy === undefined) return;
-  const { text, seconds } = ended;
-  const working = busy;
-  ended = busy = undefined;
-  send($, working ? "working" : "done", working ? {} : { text, seconds, mode }).catch(() => {});
-}
 
 let home: string | undefined;
 
@@ -108,34 +102,29 @@ export const register: Register = (on) => {
   });
 
   on("turn.start", ($, e, next) => {
-    if (e.agentId === undefined) {
-      ended = busy = undefined;
+    if (e.agentId !== undefined) agentTurns.add(e.turnId);
+    else {
+      ended = undefined;
       send($, "working", {}).catch(() => {});
     }
     return next(e);
   });
 
+  // The engine ends every turn a hook saw start, an aborted one too, so the set doesn't leak.
   on("turn.complete", async ($, e, next) => {
     const result = await next(e);
-    if (e.agentId === undefined && e.reason === "answer") {
+    if (e.agentId !== undefined) agentTurns.delete(e.turnId);
+    else if (e.reason === "answer") {
       const mine = (ended = { text: excerpt(e.answer), seconds: Math.round(e.durationMs / 1000) });
-      settle($);
-      // Without a Stop hook to say otherwise, the turn's end alone means done.
+      // A moment for an agent the turn just launched (a workflow's first) to start its own turn.
       $.clock.sleep(3000).then(() => {
         if (ended !== mine) return;
-        busy ??= false;
-        settle($);
+        ended = undefined;
+        const busy = agentTurns.size > 0;
+        send($, busy ? "working" : "done", busy ? {} : { ...mine, mode }).catch(() => {});
       }).catch(() => {});
     }
     return result;
-  });
-
-  // A shell or a monitor can outlive the task (a dev server, a watcher) and Claude Code calls the
-  // session done with them running; subagents, workflows and the like finish and report back.
-  on("classic.Stop", ($, e, next) => {
-    busy = (e.background_tasks ?? []).some((t: { type?: string }) => t.type !== "shell" && t.type !== "monitor");
-    settle($);
-    return next(e);
   });
 
   // The bubble shows the question and its options; an answer from it fills the tool's `answers`,
