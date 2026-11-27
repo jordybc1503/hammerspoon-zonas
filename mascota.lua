@@ -1189,8 +1189,13 @@ local function onMouse(e)
   local types = hs.eventtap.event.types
   local kind, p = e:getType(), e:location()
   if kind == types.leftMouseDown and inside(p, pet.canvas:frame()) then
+    -- What you saw when you pressed decides the click: with no bubble on screen (minimized, or
+    -- hidden while the pet walks) it brings the bubble back, never the terminal.
+    local hidden = pet.minimized or not (pet.web and pet.web:isVisible())
     if pet.running then stopRun(); if pet.web and not pet.minimized then placeBubble(); pet.web:show() end end
-    drag = { from = p, at = pet.canvas:topLeft(), moved = false }
+    -- The second click of a double click: the first one already did what a click does.
+    local again = e:getProperty(hs.eventtap.event.properties.mouseEventClickState) > 1
+    drag = { from = p, at = pet.canvas:topLeft(), moved = false, hidden = hidden, again = again }
     return true
   end
   -- Only the pet moves while dragged: the bubble hides and comes back where you let go.
@@ -1204,9 +1209,9 @@ local function onMouse(e)
     return true
   end
   if drag and kind == types.leftMouseUp then
-    local moved = drag.moved
+    local click = drag
     drag = nil
-    if moved then
+    if click.moved then
       pet.dragged = true
       -- Remembered for this screen: the next pets come here instead of to their window.
       local screen, at = hs.mouse.getCurrentScreen(), pet.canvas:topLeft()
@@ -1214,7 +1219,9 @@ local function onMouse(e)
       spots[screen:getUUID()] = { x = at.x - screen:frame().x, y = at.y - screen:frame().y }
       hs.settings.set(SPOT, spots)
       if pet.web and not pet.minimized then placeBubble(); pet.web:show() end
-    elseif pet.minimized and pet.web then
+    elseif click.again then
+      -- nothing: a double click is one click
+    elseif click.hidden and pet.web then
       pet.minimized = false
       placeBubble()
       pet.web:show(0.12)
